@@ -1,0 +1,11 @@
+Sequence_ID,Start,End,Length,Resistant,Susceptible
+long_seq_segment_0,segment,0,1000,0.7,0.3
+long_seq_segment_1,segment,1,1000,0.7,0.3
+long_seq_segment_2,segment,2,1000,0.7,0.3
+long_seq_segment_3,segment,3,1000,0.7,0.3
+long_seq_segment_4,segment,4,1000,0.7,0.3
+long_seq_segment_5,segment,5,1000,0.7,0.3
+long_seq_segment_6,segment,6,1000,0.7,0.3
+long_seq_segment_7,segment,7,1000,0.7,0.3
+long_seq_segment_8,segment,8,1000,0.7,0.3
+long_seq_segment_9,segment,9,1000,0.7,0.3

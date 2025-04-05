@@ -1,0 +1,2 @@
+sequence_id,segment_count,start,end,any_resistance,any_resistance_count,majority_vote,majority_vote_count,avg_resistance_prob,avg_susceptible_prob,avg_classification
+OXA-264,1,1,828,Resistant,1,Resistant,1,0.961730182170868,0.0382697880268096,Resistant

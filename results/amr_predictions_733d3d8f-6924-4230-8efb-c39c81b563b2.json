@@ -1,0 +1,88 @@
+{
+  "job_id": "733d3d8f-6924-4230-8efb-c39c81b563b2",
+  "status": "SUCCESSFUL",
+  "completed_at": "2025-04-04T17:21:53.999997",
+  "result_file_path": "/Users/alakob/projects/gast-app-streamlit/results/amr_predictions_733d3d8f-6924-4230-8efb-c39c81b563b2.json",
+  "predictions": [
+    {
+      "drug": "ampicillin",
+      "prediction": "Resistant",
+      "probability": 0.71,
+      "gene": "dfrA"
+    },
+    {
+      "drug": "tetracycline",
+      "prediction": "Resistant",
+      "probability": 0.87,
+      "gene": "tet(A)"
+    },
+    {
+      "drug": "ciprofloxacin",
+      "prediction": "Resistant",
+      "probability": 0.91,
+      "gene": "dfrA"
+    },
+    {
+      "drug": "gentamicin",
+      "prediction": "Susceptible",
+      "probability": 0.82,
+      "gene": null
+    },
+    {
+      "drug": "meropenem",
+      "prediction": "Susceptible",
+      "probability": 0.93,
+      "gene": null
+    }
+  ],
+  "results": {
+    "amr_genes": [
+      {
+        "gene": "sul1",
+        "class": "sulfonamide resistance",
+        "coverage": 97.82,
+        "identity": 100.0,
+        "resistance": [
+          "sulfamethoxazole"
+        ]
+      },
+      {
+        "gene": "dfrA",
+        "class": "dihydrofolate reductase",
+        "coverage": 94.38,
+        "identity": 98.72,
+        "resistance": [
+          "trimethoprim"
+        ]
+      },
+      {
+        "gene": "blaTEM-1",
+        "class": "beta-lactamase",
+        "coverage": 98.76,
+        "identity": 99.21,
+        "resistance": [
+          "ampicillin",
+          "penicillin"
+        ]
+      },
+      {
+        "gene": "tet(A)",
+        "class": "tetracycline efflux",
+        "coverage": 95.46,
+        "identity": 99.93,
+        "resistance": [
+          "tetracycline"
+        ]
+      }
+    ]
+  },
+  "model_id": "AMR-Pred-v2.0",
+  "sequence_id": "733d3d8f-6924-4230-8efb-c39c81b563b2",
+  "sequence_name": "Input-733d3d8f",
+  "sequence_length": 100,
+  "gc_content": "50.0%",
+  "analyzed_region": "1-100",
+  "contig_count": 1,
+  "gene_count": 39,
+  "timestamp": "2025-04-04T17:21:53.999995"
+}

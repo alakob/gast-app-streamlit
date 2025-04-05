@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""
+Entry point script for the Bakta CLI.
+
+This script serves as a wrapper around the bakta.cli module
+to provide a simple command-line interface for Bakta operations.
+"""
+
+import os
+import sys
+
+# Add the parent directory to Python path if run directly
+script_dir = os.path.dirname(os.path.abspath(__file__))
+package_dir = os.path.dirname(os.path.dirname(script_dir))
+if package_dir not in sys.path:
+    sys.path.insert(0, package_dir)
+
+from amr_predictor.bakta.cli import main
+
+if __name__ == "__main__":
+    sys.exit(main()) 

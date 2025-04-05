@@ -1,0 +1,76 @@
+{
+  "genome": {
+    "genus": "Escherichia",
+    "species": "coli",
+    "strain": "K-12",
+    "contig_count": 2,
+    "size": 480,
+    "gc": 0.5,
+    "topology": "circular",
+    "complete": true,
+    "translation_table": 11
+  },
+  "stats": {
+    "cds": 3,
+    "rna": 2,
+    "tmrna": 0,
+    "rrna": 1,
+    "trna": 1,
+    "ncRNA": 0,
+    "ori": 0,
+    "repeat_region": 0,
+    "crispr": 0
+  },
+  "features": [
+    {
+      "type": "cds",
+      "contig": "contig1",
+      "start": 1,
+      "stop": 60,
+      "strand": "+",
+      "locus_tag": "ECO_00001",
+      "gene": "hyp1",
+      "product": "hypothetical protein"
+    },
+    {
+      "type": "cds",
+      "contig": "contig1",
+      "start": 80,
+      "stop": 120,
+      "strand": "-",
+      "locus_tag": "ECO_00002",
+      "gene": "dnaE",
+      "product": "DNA polymerase III"
+    },
+    {
+      "type": "trna",
+      "contig": "contig1",
+      "start": 150,
+      "stop": 180,
+      "strand": "+",
+      "locus_tag": "ECO_00003",
+      "gene": null,
+      "product": "tRNA-Ala(GGC)"
+    },
+    {
+      "type": "cds",
+      "contig": "contig2",
+      "start": 10,
+      "stop": 90,
+      "strand": "+",
+      "locus_tag": "ECO_00004",
+      "gene": "atpA",
+      "product": "ATP synthase subunit alpha"
+    },
+    {
+      "type": "rrna",
+      "contig": "contig2",
+      "start": 120,
+      "stop": 200,
+      "strand": "+",
+      "locus_tag": "ECO_00005",
+      "gene": null,
+      "product": "16S ribosomal RNA"
+    }
+  ]
+} 

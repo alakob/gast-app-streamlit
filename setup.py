@@ -1,0 +1,90 @@
+"""Setup configuration for AMR Predictor."""
+
+from setuptools import setup, find_packages
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
+setup(
+    name="amr_predictor",
+    version="1.0.0",
+    description="AMR Predictor - Antimicrobial Resistance Prediction Tool",
+    author="Your Name",
+    author_email="your.email@example.com",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/yourusername/amr-predictor",
+    packages=find_packages(),
+    install_requires=[
+        "fastapi>=0.68.0",
+        "uvicorn>=0.15.0",
+        "pydantic>=2.0.0",
+        "numpy>=1.19.0",
+        "pandas>=1.3.0",
+        "scikit-learn>=0.24.0",
+        "torch>=1.9.0",
+        "transformers>=4.11.0",
+        "elasticsearch>=7.14.0",
+        "aiohttp>=3.8.0",
+        "websockets>=10.0",
+        "click>=8.0.0",
+        "rich>=10.0.0",
+        "typer>=0.3.0",
+        "prometheus-client>=0.11.0",
+        "python-multipart>=0.0.5",
+        "python-jose>=3.3.0",
+        "passlib>=1.7.4",
+        "bcrypt>=3.2.0",
+        "python-dotenv>=0.19.0",
+        "structlog>=21.1.0",
+        "tenacity>=8.0.0",
+        "httpx>=0.23.0",
+        "pytest>=6.2.5",
+        "pytest-asyncio>=0.15.1",
+        "pytest-cov>=2.12.1",
+        "black>=21.7b0",
+        "isort>=5.9.3",
+        "flake8>=3.9.2",
+        "mypy>=0.910",
+        "pre-commit>=2.13.0",
+    ],
+    extras_require={
+        "dev": [
+            "pytest>=6.2.5",
+            "pytest-asyncio>=0.15.1",
+            "pytest-cov>=2.12.1",
+            "black>=21.7b0",
+            "isort>=5.9.3",
+            "flake8>=3.9.2",
+            "mypy>=0.910",
+            "pre-commit>=2.13.0",
+        ],
+        "test": [
+            "pytest>=6.2.5",
+            "pytest-asyncio>=0.15.1",
+            "pytest-cov>=2.12.1",
+        ],
+        "lint": [
+            "black>=21.7b0",
+            "isort>=5.9.3",
+            "flake8>=3.9.2",
+            "mypy>=0.910",
+        ],
+    },
+    entry_points={
+        "console_scripts": [
+            "amr-predictor=amr_predictor.cli:main",
+        ],
+    },
+    python_requires=">=3.8",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Topic :: Scientific/Engineering :: Bio-Informatics",
+    ],
+) 

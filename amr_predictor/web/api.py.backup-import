@@ -1,0 +1,802 @@
+"""
+Web API for AMR Predictor.
+
+This module provides FastAPI endpoints for the AMR Predictor functionality,
+enabling integration with web applications.
+"""
+
+import os
+import tempfile
+import json
+import uuid
+from typing import List, Dict, Optional, Any, Union
+from datetime import datetime
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Query, Path, Body, Request, Form
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+import logging
+
+# Try to import CORS middleware
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+    CORS_AVAILABLE = True
+except ImportError:
+    CORS_AVAILABLE = False
+
+from ..core.utils import logger, ProgressTracker, ensure_directory_exists, get_default_output_path
+from ..core.prediction import PredictionPipeline
+from ..processing.aggregation import PredictionAggregator
+from ..processing.sequence_processing import SequenceProcessor
+from ..processing.visualization import VisualizationGenerator
+from ..core.repository import AMRJobRepository
+
+# Create FastAPI app
+app = FastAPI(
+    title="AMR Predictor API",
+    description="API for predicting antimicrobial resistance from genomic sequences",
+    version="1.0.0"
+)
+
+# Add custom exception handler for validation errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Handle the errors without trying to include the entire body
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": str(exc.errors()),
+            "message": "Validation error - check your request format"
+        }
+    )
+
+# Add CORS middleware if available
+if CORS_AVAILABLE:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Update with specific origins in production
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+# Define directories for uploads and results
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+RESULTS_DIR = os.path.join(os.getcwd(), "results")
+
+# Ensure directories exist
+ensure_directory_exists(UPLOAD_DIR)
+ensure_directory_exists(RESULTS_DIR)
+
+# Initialize AMR job repository for job storage
+job_repository = AMRJobRepository()
+logger.info("Initialized AMR job repository for job storage")
+
+# Pydantic models for API
+class PredictionRequest(BaseModel):
+    """Request model for prediction endpoint"""
+    model_name: str = Field(default="alakob/DraGNOME-2.5b-v1", description="HuggingFace model name or path")
+    batch_size: int = Field(default=8, description="Batch size for predictions", ge=1)
+    segment_length: int = Field(default=6000, description="Maximum segment length, 0 to disable splitting", ge=0)
+    segment_overlap: int = Field(default=0, description="Overlap between segments", ge=0)
+    use_cpu: bool = Field(default=False, description="Force CPU inference instead of GPU")
+    resistance_threshold: float = Field(default=0.5, description="Threshold for resistance classification", ge=0.0, le=1.0)
+    enable_sequence_aggregation: bool = Field(default=True, description="Enable sequence-level aggregation of results")
+
+class AggregationRequest(BaseModel):
+    """Request model for aggregation endpoint"""
+    model_suffix: str = Field(default="_all_107_sequences_prediction", description="Suffix to remove from filenames when extracting model names")
+    file_pattern: str = Field(default="*_all_107_sequences_prediction.txt", description="File pattern to match for input files")
+
+class SequenceProcessingRequest(BaseModel):
+    """Request model for sequence processing endpoint"""
+    resistance_threshold: float = Field(default=0.5, description="Threshold for resistance classification", ge=0.0, le=1.0)
+
+class VisualizationRequest(BaseModel):
+    """Request model for visualization endpoint"""
+    step_size: int = Field(default=1200, description="Step size in base pairs for WIG format", ge=1)
+
+class JobResponse(BaseModel):
+    """Response model for job status"""
+    job_id: str
+    status: str
+    progress: float = 0.0
+    start_time: str
+    end_time: Optional[str] = None
+    result_file: Optional[str] = None
+    aggregated_result_file: Optional[str] = None
+    error: Optional[str] = None
+    additional_info: Optional[Dict[str, Any]] = None
+
+# Web-specific progress tracker
+class WebProgressTracker(ProgressTracker):
+    """
+    Web-specific progress tracker that updates job status.
+    """
+    
+    def __init__(self, job_id: str, total_steps: int = 100):
+        """
+        Initialize the web progress tracker.
+        
+        Args:
+            job_id: The job ID to update
+            total_steps: Total number of steps in the operation
+        """
+        super().__init__(total_steps=total_steps, callback=self._update_job_status)
+        self.job_id = job_id
+    
+    def _update_job_status(self, tracker):
+        """Update the job status in the database"""
+        # Get job from repository to check if it exists
+        job = job_repository.get_job(self.job_id)
+        if job:
+            # Update status and progress
+            status_update = {
+                "progress": tracker.percentage,
+                "status": tracker.status
+            }
+            
+            # Add additional info if provided
+            if hasattr(tracker, 'additional_info') and tracker.additional_info:
+                job_repository.add_job_parameters(self.job_id, tracker.additional_info)
+            
+            # Handle error case
+            if tracker.error:
+                status_update["error"] = tracker.error
+                status_update["status"] = "Error"
+            
+            # Update job status in repository
+            job_repository.update_job_status(self.job_id, **status_update)
+
+
+# Background task functions
+async def predict_task(job_id: str, fasta_path: str, model_name: str, batch_size: int,
+                     segment_length: int, segment_overlap: int, use_cpu: bool,
+                     resistance_threshold: float, enable_sequence_aggregation: bool):
+    """
+    Background task for running AMR prediction.
+    
+    Args:
+        job_id: Job ID for tracking
+        fasta_path: Path to the FASTA file
+        model_name: HuggingFace model name or path
+        batch_size: Batch size for predictions
+        segment_length: Maximum segment length, 0 to disable splitting
+        segment_overlap: Overlap between segments
+        use_cpu: Whether to force CPU inference instead of GPU
+        resistance_threshold: Threshold for resistance classification (default: 0.5)
+        enable_sequence_aggregation: Whether to enable sequence-level aggregation of results
+    """
+    try:
+        # Create a direct database connection for the background task
+        db_path = os.path.join(os.getcwd(), "data", "db", "predictor.db")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        
+        # Enable optimizations
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        
+        # Create a custom update_status function for this task
+        def update_status(status, progress=None, error=None, result_file=None, aggregated_result_file=None):
+            try:
+                cursor = conn.cursor()
+                
+                # Build the update query
+                update_fields = ["status = ?"]
+                update_values = [status]
+                
+                if status in ["Completed", "Failed"]:
+                    update_fields.append("end_time = ?")
+                    update_values.append(datetime.now().isoformat())
+                
+                if progress is not None:
+                    update_fields.append("progress = ?")
+                    update_values.append(progress)
+                
+                if error is not None:
+                    update_fields.append("error = ?")
+                    update_values.append(error)
+                
+                if result_file is not None:
+                    update_fields.append("result_file = ?")
+                    update_values.append(result_file)
+                
+                if aggregated_result_file is not None:
+                    update_fields.append("aggregated_result_file = ?")
+                    update_values.append(aggregated_result_file)
+                
+                # Format the update query
+                update_query = f"UPDATE amr_jobs SET {', '.join(update_fields)} WHERE id = ?"
+                update_values.append(job_id)
+                
+                # Execute update
+                cursor.execute(update_query, update_values)
+                conn.commit()
+                
+                if error:
+                    logger.error(f"Job {job_id} error: {error}")
+                else:
+                    logger.info(f"Updated AMR job status: {job_id} -> {status}")
+                    
+                return True
+            except Exception as e:
+                logger.error(f"Error updating job status: {str(e)}")
+                return False
+        
+        # Create a custom progress tracker that uses our update function
+        class DirectProgressTracker:
+            def __init__(self, job_id, total_steps=100):
+                self.job_id = job_id
+                self.total_steps = total_steps
+                self.current_step = 0
+                self.progress = 0.0
+            
+            def update(self, step_increment=1):
+                self.current_step += step_increment
+                self.progress = min(100.0, (self.current_step / self.total_steps) * 100)
+                update_status("Running", progress=self.progress)
+                return self.progress
+        
+        # Create output file path
+        output_file = os.path.join(RESULTS_DIR, f"amr_predictions_{job_id}.tsv")
+        
+        # Initialize our custom progress tracker
+        progress_tracker = DirectProgressTracker(job_id=job_id)
+        
+        # Initialize pipeline
+        pipeline = PredictionPipeline(
+            model_name=model_name,
+            batch_size=batch_size,
+            segment_length=segment_length,
+            segment_overlap=segment_overlap,
+            device="cpu" if use_cpu else None,
+            progress_tracker=progress_tracker,
+            enable_sequence_aggregation=enable_sequence_aggregation,
+            resistance_threshold=resistance_threshold
+        )
+        
+        # Process the FASTA file
+        results = pipeline.process_fasta_file(fasta_path, output_file)
+        
+        # Update job status
+        if "error" in results and results["error"]:
+            update_status(
+                status="Error",
+                error=results["error"]
+            )
+        else:
+            # Get the aggregated file path from pipeline results if available
+            aggregated_file = None
+            if enable_sequence_aggregation:
+                # Check if the pipeline has the aggregated file path in its results
+                if "aggregated_output_file" in results and results["aggregated_output_file"]:
+                    aggregated_file = results["aggregated_output_file"]
+                    # Verify the file exists
+                    if not os.path.exists(aggregated_file):
+                        logger.warning(f"Aggregated file not found at {aggregated_file}")
+                        aggregated_file = None
+                else:
+                    # Fallback: Use naming convention to find aggregated file
+                    base_output_file = output_file
+                    if base_output_file.lower().endswith('.tsv'):
+                        aggregated_file = base_output_file[:-4] + '_aggregated.tsv'
+                    else:
+                        aggregated_file = base_output_file + '_aggregated.tsv'
+                    
+                    # Verify the file exists
+                    if not os.path.exists(aggregated_file):
+                        logger.warning(f"Expected aggregated file not found at {aggregated_file}")
+                        aggregated_file = None
+            
+            # Update job status in database
+            # If aggregated file exists, include it in the update
+            if aggregated_file:
+                update_status(
+                    status="Completed",
+                    progress=100.0,
+                    result_file=output_file,
+                    aggregated_result_file=aggregated_file
+                )
+            else:
+                update_status(
+                    status="Completed",
+                    progress=100.0,
+                    result_file=output_file
+                )
+        
+        # Close our database connection
+        conn.close()
+    
+    except Exception as e:
+        logger.error(f"Error in prediction task: {str(e)}")
+        try:
+            # Try to update job status with our direct connection
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE amr_jobs SET status = ?, error = ?, end_time = ? WHERE id = ?",
+                ("Error", str(e), datetime.now().isoformat(), job_id)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as conn_error:
+            # If that fails, log it but don't crash
+            logger.error(f"Error updating job status after task error: {str(conn_error)}")
+
+
+async def aggregate_task(job_id: str, file_paths: List[str], model_suffix: str):
+    """
+    Background task for running AMR aggregation.
+    
+    Args:
+        job_id: Job ID for tracking
+        file_paths: List of prediction files to process
+        model_suffix: Suffix to remove from filenames when extracting model names
+    """
+    try:
+        # Create output file path
+        output_file = os.path.join(RESULTS_DIR, f"amr_aggregated_{job_id}.csv")
+        
+        # Initialize progress tracker
+        progress_tracker = WebProgressTracker(job_id=job_id)
+        
+        # Initialize aggregator
+        aggregator = PredictionAggregator(
+            model_suffix=model_suffix,
+            progress_tracker=progress_tracker
+        )
+        
+        # Process the prediction files
+        results = aggregator.process_prediction_files(file_paths, output_file)
+        
+        # Update job status in the database
+        if results.empty:
+            job_repository.update_job_status(
+                job_id=job_id,
+                status="Error",
+                error="Aggregation failed: no results generated"
+            )
+        else:
+            job_repository.update_job_status(
+                job_id=job_id,
+                status="Completed",
+                progress=100.0,
+                result_file=output_file
+            )
+    
+    except Exception as e:
+        logger.error(f"Error in aggregation task: {str(e)}")
+        job_repository.update_job_status(
+            job_id=job_id,
+            status="Error",
+            error=str(e)
+        )
+
+
+async def process_sequence_task(job_id: str, input_file: str, resistance_threshold: float):
+    """
+    Background task for running sequence processing.
+    
+    Args:
+        job_id: Job ID for tracking
+        input_file: Path to the input prediction file
+        resistance_threshold: Threshold for resistance classification
+    """
+    try:
+        # Create output file path
+        output_file = os.path.join(RESULTS_DIR, f"amr_sequences_{job_id}.csv")
+        
+        # Initialize progress tracker
+        progress_tracker = WebProgressTracker(job_id=job_id)
+        
+        # Initialize processor
+        processor = SequenceProcessor(
+            resistance_threshold=resistance_threshold,
+            progress_tracker=progress_tracker
+        )
+        
+        # Process the prediction file
+        results = processor.process_prediction_file(input_file, output_file)
+        
+        # Update job status in the database
+        if results.empty:
+            job_repository.update_job_status(
+                job_id=job_id,
+                status="Error",
+                error="Sequence processing failed: no results generated"
+            )
+        else:
+            job_repository.update_job_status(
+                job_id=job_id,
+                status="Completed",
+                progress=100.0,
+                result_file=output_file
+            )
+    
+    except Exception as e:
+        logger.error(f"Error in sequence processing task: {str(e)}")
+        job_repository.update_job_status(
+            job_id=job_id,
+            status="Error",
+            error=str(e)
+        )
+
+
+async def visualize_task(job_id: str, input_file: str, step_size: int):
+    """
+    Background task for running visualization.
+    
+    Args:
+        job_id: Job ID for tracking
+        input_file: Path to the input prediction file
+        step_size: Step size in base pairs for WIG format
+    """
+    try:
+        # Create output file paths
+        output_wig = os.path.join(RESULTS_DIR, f"amr_visualization_{job_id}.wig")
+        processed_file = os.path.join(RESULTS_DIR, f"amr_viz_processed_{job_id}.tsv")
+        
+        # Initialize progress tracker
+        progress_tracker = WebProgressTracker(job_id=job_id)
+        
+        # Initialize generator
+        generator = VisualizationGenerator(
+            step_size=step_size,
+            processing_dir=RESULTS_DIR,
+            progress_tracker=progress_tracker
+        )
+        
+        # Convert predictions to WIG
+        wig_file = generator.prediction_to_wig(
+            input_file=input_file,
+            output_wig=output_wig,
+            processed_file=processed_file
+        )
+        
+        # Update job status in the database
+        if not wig_file:
+            job_repository.update_job_status(
+                job_id=job_id,
+                status="Error",
+                error="Visualization failed: no WIG file generated"
+            )
+        else:
+            # Update job status
+            job_repository.update_job_status(
+                job_id=job_id,
+                status="Completed",
+                progress=100.0,
+                result_file=wig_file
+            )
+            
+            # Add additional info about processed file
+            job_repository.add_job_parameters(
+                job_id=job_id,
+                parameters={"processed_file": processed_file}
+            )
+    
+    except Exception as e:
+        logger.error(f"Error in visualization task: {str(e)}")
+        job_repository.update_job_status(
+            job_id=job_id,
+            status="Error",
+            error=str(e)
+        )
+
+
+# API endpoints
+@app.post("/predict", response_model=JobResponse)
+async def predict(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    model_name: str = Form("alakob/DraGNOME-2.5b-v1"),
+    batch_size: int = Form(8),
+    segment_length: int = Form(6000),
+    segment_overlap: int = Form(0),
+    use_cpu: bool = Form(False),
+    resistance_threshold: float = Form(0.5),
+    enable_sequence_aggregation: bool = Form(True)
+):
+    # Create a params object
+    params = PredictionRequest(
+        model_name=model_name,
+        batch_size=batch_size,
+        segment_length=segment_length,
+        segment_overlap=segment_overlap,
+        use_cpu=use_cpu,
+        resistance_threshold=resistance_threshold,
+        enable_sequence_aggregation=enable_sequence_aggregation
+    )
+    logger.debug(f"Using parameters: {params.dict()}")
+    """
+    Predict antimicrobial resistance from a FASTA file.
+    
+    Args:
+        background_tasks: FastAPI background tasks
+        file: FASTA file upload
+        params: Prediction parameters
+        
+    Returns:
+        Job response with ID and status
+    """
+    # Generate job ID
+    job_id = str(uuid.uuid4())
+    
+    # Save uploaded file
+    file_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+    
+    with open(file_path, "wb") as f:
+        contents = await file.read()
+        f.write(contents)
+    
+    # Initialize job in database
+    additional_info = {
+        "input_file": file.filename,
+        "model_name": params.model_name,
+        "batch_size": params.batch_size,
+        "segment_length": params.segment_length,
+        "segment_overlap": params.segment_overlap,
+        "use_cpu": params.use_cpu,
+        "resistance_threshold": params.resistance_threshold,
+        "enable_sequence_aggregation": params.enable_sequence_aggregation
+    }
+    
+    # Create the job in the repository
+    job = job_repository.create_job(
+        job_id=job_id,
+        initial_status="Submitted",
+        additional_info=additional_info
+    )
+    
+    # Add task to background tasks
+    background_tasks.add_task(
+        predict_task,
+        job_id=job_id,
+        fasta_path=file_path,
+        model_name=params.model_name,
+        batch_size=params.batch_size,
+        segment_length=params.segment_length,
+        segment_overlap=params.segment_overlap,
+        use_cpu=params.use_cpu,
+        resistance_threshold=params.resistance_threshold,
+        enable_sequence_aggregation=params.enable_sequence_aggregation
+    )
+    
+    return job
+
+
+@app.post("/aggregate", response_model=JobResponse)
+async def aggregate(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    model_suffix: str = Form("_all_107_sequences_prediction"),
+    file_pattern: str = Form("*_all_107_sequences_prediction.txt")
+):
+    """
+    Aggregate AMR prediction results from multiple files.
+    
+    Args:
+        background_tasks: FastAPI background tasks
+        files: List of prediction files to process
+        params: Aggregation parameters
+        
+    Returns:
+        Job response with ID and status
+    """
+    # Generate job ID
+    job_id = str(uuid.uuid4())
+    
+    # Save uploaded files
+    file_paths = []
+    file_names = []
+    
+    for file in files:
+        file_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+        file_paths.append(file_path)
+        file_names.append(file.filename)
+        
+        with open(file_path, "wb") as f:
+            contents = await file.read()
+            f.write(contents)
+    
+    # Initialize job in database
+    additional_info = {
+        "input_files": file_names,
+        "model_suffix": model_suffix,
+        "file_pattern": file_pattern
+    }
+    
+    # Create the job in the repository
+    job = job_repository.create_job(
+        job_id=job_id,
+        initial_status="Submitted",
+        additional_info=additional_info
+    )
+    
+    # Add task to background tasks
+    background_tasks.add_task(
+        aggregate_task,
+        job_id=job_id,
+        file_paths=file_paths,
+        model_suffix=model_suffix
+    )
+    
+    return job
+
+
+@app.post("/sequence", response_model=JobResponse)
+async def process_sequence(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    resistance_threshold: float = Form(0.5)
+):
+    """
+    Process prediction results at the sequence level.
+    
+    Args:
+        background_tasks: FastAPI background tasks
+        file: Prediction file to process
+        params: Sequence processing parameters
+        
+    Returns:
+        Job response with ID and status
+    """
+    # Generate job ID
+    job_id = str(uuid.uuid4())
+    
+    # Save uploaded file
+    file_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+    
+    with open(file_path, "wb") as f:
+        contents = await file.read()
+        f.write(contents)
+    
+    # Initialize job in database
+    additional_info = {
+        "input_file": file.filename,
+        "resistance_threshold": resistance_threshold
+    }
+    
+    # Create the job in the repository
+    job = job_repository.create_job(
+        job_id=job_id,
+        initial_status="Submitted",
+        additional_info=additional_info
+    )
+    
+    # Add task to background tasks
+    background_tasks.add_task(
+        process_sequence_task,
+        job_id=job_id,
+        input_file=file_path,
+        resistance_threshold=resistance_threshold
+    )
+    
+    return job
+
+
+@app.post("/visualize", response_model=JobResponse)
+async def visualize(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    step_size: int = Form(1200)
+):
+    """
+    Convert prediction results to visualization formats.
+    
+    Args:
+        background_tasks: FastAPI background tasks
+        file: Prediction file to process
+        params: Visualization parameters
+        
+    Returns:
+        Job response with ID and status
+    """
+    # Generate job ID
+    job_id = str(uuid.uuid4())
+    
+    # Save uploaded file
+    file_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+    
+    with open(file_path, "wb") as f:
+        contents = await file.read()
+        f.write(contents)
+    
+    # Initialize job in database
+    additional_info = {
+        "input_file": file.filename,
+        "step_size": step_size
+    }
+    
+    # Create the job in the repository
+    job = job_repository.create_job(
+        job_id=job_id,
+        initial_status="Submitted",
+        additional_info=additional_info
+    )
+    
+    # Add task to background tasks
+    background_tasks.add_task(
+        visualize_task,
+        job_id=job_id,
+        input_file=file_path,
+        step_size=step_size
+    )
+    
+    return job
+
+
+@app.get("/jobs/{job_id}", response_model=JobResponse)
+async def get_job_status(job_id: str = Path(..., description="Job ID to check")):
+    """
+    Get the status of a job.
+    
+    Args:
+        job_id: Job ID to check
+        
+    Returns:
+        Job response with current status
+    """
+    job = job_repository.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    return job
+
+
+@app.get("/jobs/{job_id}/download")
+async def download_result(
+    job_id: str = Path(..., description="Job ID to download results for"),
+    file_type: str = Query("regular", description="Type of file to download: 'regular' or 'aggregated'")
+):
+    """
+    Download the result file for a job.
+    
+    Args:
+        job_id: Job ID to download results for
+        file_type: Type of file to download ('regular' or 'aggregated')
+        
+    Returns:
+        File response with the requested result file
+    """
+    job = job_repository.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    if job.get("status") != "Completed":
+        raise HTTPException(status_code=400, detail=f"Job {job_id} is not completed")
+    
+    # Determine which file to return based on file_type parameter
+    if file_type.lower() == "aggregated":
+        if not job.get("aggregated_result_file") or not os.path.exists(job.get("aggregated_result_file", "")):
+            raise HTTPException(status_code=404, detail=f"Aggregated result file for job {job_id} not found")
+        file_path = job["aggregated_result_file"]
+    else:  # Default to regular file
+        if not job.get("result_file") or not os.path.exists(job.get("result_file", "")):
+            raise HTTPException(status_code=404, detail=f"Result file for job {job_id} not found")
+        file_path = job["result_file"]
+    
+    return FileResponse(path=file_path, filename=os.path.basename(file_path))
+
+
+@app.get("/jobs")
+async def list_jobs(
+    status: Optional[str] = Query(None, description="Filter jobs by status"),
+    limit: int = Query(100, description="Maximum number of jobs to return"),
+    offset: int = Query(0, description="Pagination offset")
+):
+    """
+    List all jobs with optional filtering and pagination.
+    
+    Args:
+        status: Filter jobs by status (optional)
+        limit: Maximum number of jobs to return
+        offset: Pagination offset
+        
+    Returns:
+        List of all jobs matching the criteria
+    """
+    return job_repository.get_jobs(status=status, limit=limit, offset=offset)

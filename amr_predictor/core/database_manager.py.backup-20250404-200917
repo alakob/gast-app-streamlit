@@ -1,0 +1,517 @@
+#!/usr/bin/env python3
+"""
+Database manager for AMR prediction jobs.
+
+This module provides a database manager for storing and retrieving AMR prediction
+job information using SQLite.
+"""
+import os
+import sqlite3
+import logging
+import json
+from typing import Dict, List, Any, Optional, Union
+from datetime import datetime
+from contextlib import contextmanager
+from pathlib import Path
+
+# Reuse the connection pool from Bakta module
+from amr_predictor.bakta.database_pool import get_connection, get_connection_pool
+
+# Configure logging
+logger = logging.getLogger("amr-database-manager")
+
+class AMRDatabaseManager:
+    """
+    Database manager for AMR prediction jobs.
+    
+    This class provides methods for storing and retrieving AMR prediction
+    job data in a SQLite database.
+    """
+    
+    def __init__(self, db_path: Optional[str] = None, pool_min_connections: int = 2, 
+                pool_max_connections: int = 5):
+        """
+        Initialize the AMR database manager.
+        
+        Args:
+            db_path: Path to the SQLite database
+            pool_min_connections: Minimum connections in the pool
+            pool_max_connections: Maximum connections in the pool
+        """
+        # Determine database path
+        if db_path is None:
+            # Use the default predictor.db in the data/db directory
+            db_path = os.path.join(os.getcwd(), "data", "db", "predictor.db")
+        
+        # Store path for reference
+        self.db_path = db_path
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
+        # Initialize the connection pool
+        self.pool = get_connection_pool(
+            db_path=db_path,
+            min_connections=pool_min_connections,
+            max_connections=pool_max_connections
+        )
+        
+        # Initialize database schema
+        self._init_db()
+        
+        logger.info(f"Initialized AMR database manager with connection pool for {db_path}")
+    
+    def _init_db(self):
+        """Initialize the database schema if tables don't exist"""
+        with get_connection(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Create tables if they don't exist
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS amr_jobs (
+                id TEXT PRIMARY KEY,                -- Job ID (UUID)
+                status TEXT NOT NULL,               -- Job status (Submitted, Running, Completed, Failed)
+                progress REAL NOT NULL DEFAULT 0.0, -- Progress percentage
+                start_time TEXT NOT NULL,           -- ISO format timestamp for job start
+                end_time TEXT,                      -- ISO format timestamp for job completion
+                result_file TEXT,                   -- Path to the result file
+                aggregated_result_file TEXT,        -- Path to the aggregated result file
+                error TEXT,                         -- Error message if job failed
+                created_at TEXT NOT NULL,           -- ISO format timestamp for record creation
+                job_name TEXT NOT NULL DEFAULT 'AMR Analysis Job' -- Name of the job
+            )
+            ''')
+            
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS amr_job_parameters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,               -- Foreign key to amr_jobs.id
+                param_name TEXT NOT NULL,           -- Parameter name
+                param_value TEXT,                   -- Parameter value as string
+                FOREIGN KEY (job_id) REFERENCES amr_jobs(id) ON DELETE CASCADE
+            )
+            ''')
+            
+            # Create indexes for better performance
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_amr_jobs_status ON amr_jobs(status)
+            ''')
+            
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_amr_jobs_created_at ON amr_jobs(created_at)
+            ''')
+            
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_amr_job_parameters_job_id ON amr_job_parameters(job_id)
+            ''')
+            
+            # Commit is handled by the context manager
+    
+    def get_connection(self):
+        """Get a connection from the pool"""
+        return get_connection(self.db_path)
+    def get_direct_connection(self):
+        """
+        Create a direct SQLite connection bypassing the connection pool.
+        
+        This is useful for background tasks that need their own dedicated connection.
+        The caller is responsible for closing this connection.
+        
+        Returns:
+            A new SQLite connection
+        """
+        # Create a new connection directly
+        conn = sqlite3.connect(self.db_path)
+        
+        # Set row factory for dict-like access
+        conn.row_factory = sqlite3.Row
+        
+        # Enable foreign keys
+        conn.execute("PRAGMA foreign_keys = ON")
+        
+        # Use WAL journal mode for better concurrency
+        conn.execute("PRAGMA journal_mode = WAL")
+        
+        # Set a timeout for busy connections
+        conn.execute("PRAGMA busy_timeout = 5000")  # 5 seconds
+        
+        return conn
+    
+    def get_fresh_connection(self):
+        """
+        Get a fresh connection directly from sqlite3.
+        
+        This is useful for background tasks that need to ensure 
+        the connection is not closed by other operations.
+        
+        Returns:
+            A new sqlite3 connection that should be closed by the caller
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+    
+    def save_job(self, job_id: str, status: str = "Submitted", progress: float = 0.0, 
+                 additional_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Save a new job to the database.
+        
+        Args:
+            job_id: Unique job ID
+            status: Initial job status
+            progress: Initial progress percentage
+            additional_info: Additional job parameters to store
+            
+        Returns:
+            Job data dictionary
+        """
+        now = datetime.now().isoformat()
+        
+        # Determine job name from additional_info or use default
+        job_name = "AMR Analysis Job"
+        if additional_info and "input_file" in additional_info:
+            job_name = f"Analysis of {additional_info['input_file']}"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create the job record
+            cursor.execute(
+                """
+                INSERT INTO amr_jobs (
+                    id, status, progress, start_time, created_at, job_name
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (job_id, status, progress, now, now, job_name)
+            )
+            
+            # Add additional parameters if provided
+            if additional_info:
+                self.add_job_parameters(job_id, additional_info)
+            
+            conn.commit()
+            
+            # Return the job data
+            return self.get_job(job_id)
+    
+    def update_job_status(self, job_id: str, status: str, progress: float = None,
+                          error: Optional[str] = None, result_file: Optional[str] = None,
+                          aggregated_result_file: Optional[str] = None) -> bool:
+        """
+        Update a job's status and related information.
+        
+        Args:
+            job_id: Job ID to update
+            status: New job status
+            progress: New progress percentage (if None, not updated)
+            error: Optional error message
+            result_file: Optional path to result file
+            aggregated_result_file: Optional path to aggregated result file
+            
+        Returns:
+            True if successful, False if job not found
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if job exists
+            cursor.execute("SELECT id FROM amr_jobs WHERE id = ?", (job_id,))
+            if cursor.fetchone() is None:
+                return False
+            
+            # Build the update query dynamically based on provided parameters
+            update_fields = ["status = ?"]
+            update_values = [status]
+            
+            if status in ["Completed", "Failed"]:
+                update_fields.append("end_time = ?")
+                update_values.append(datetime.now().isoformat())
+            
+            if progress is not None:
+                update_fields.append("progress = ?")
+                update_values.append(progress)
+            
+            if error is not None:
+                update_fields.append("error = ?")
+                update_values.append(error)
+            
+            if result_file is not None:
+                update_fields.append("result_file = ?")
+                update_values.append(result_file)
+            
+            if aggregated_result_file is not None:
+                update_fields.append("aggregated_result_file = ?")
+                update_values.append(aggregated_result_file)
+            
+            # Format the update query
+            update_query = f"UPDATE amr_jobs SET {', '.join(update_fields)} WHERE id = ?"
+            update_values.append(job_id)
+            
+            # Execute update
+            cursor.execute(update_query, update_values)
+            conn.commit()
+            
+            return True
+    
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get job data by ID.
+        
+        Args:
+            job_id: Job ID to retrieve
+            
+        Returns:
+            Job data dictionary or None if not found
+        """
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Get job data
+            cursor.execute(
+                """
+                SELECT * FROM amr_jobs WHERE id = ?
+                """,
+                (job_id,)
+            )
+            
+            job_row = cursor.fetchone()
+            if not job_row:
+                return None
+                
+            job_data = dict(job_row)
+            
+            # Map 'id' to 'job_id' for API compatibility
+            if 'id' in job_data:
+                job_data['job_id'] = job_data['id']
+            
+            # Get job parameters
+            cursor.execute(
+                """
+                SELECT param_name, param_value FROM amr_job_parameters WHERE job_id = ?
+                """,
+                (job_id,)
+            )
+            
+            # Add parameters to job data
+            for row in cursor.fetchall():
+                job_data[row["param_name"]] = row["param_value"]
+            
+            return job_data
+    
+    def get_jobs(self, status: Optional[str] = None, limit: int = 100, 
+                offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Get a list of jobs, optionally filtered by status.
+        
+        Args:
+            status: Filter by job status
+            limit: Maximum number of jobs to return
+            offset: Pagination offset
+            
+        Returns:
+            List of job data dictionaries
+        """
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Build query based on filter
+            if status:
+                query = """
+                SELECT * FROM amr_jobs 
+                WHERE status = ? 
+                ORDER BY created_at DESC 
+                LIMIT ? OFFSET ?
+                """
+                cursor.execute(query, (status, limit, offset))
+            else:
+                query = """
+                SELECT * FROM amr_jobs 
+                ORDER BY created_at DESC 
+                LIMIT ? OFFSET ?
+                """
+                cursor.execute(query, (limit, offset))
+            
+            job_rows = cursor.fetchall()
+            
+            jobs = []
+            for job_row in job_rows:
+                job_data = dict(job_row)
+                
+                # Map 'id' to 'job_id' for API compatibility
+                if 'id' in job_data:
+                    job_data['job_id'] = job_data['id']
+                
+                # Get parameters for this job
+                params_cursor = conn.cursor()
+                params_cursor.execute(
+                    """
+                    SELECT param_name, param_value FROM amr_job_parameters WHERE job_id = ?
+                    """,
+                    (job_data["id"],)
+                )
+                
+                # Add parameters to job data
+                for row in params_cursor.fetchall():
+                    job_data[row["param_name"]] = row["param_value"]
+                
+                jobs.append(job_data)
+            
+            return jobs
+    
+    def add_job_parameter(self, job_id: str, param_name: str, param_value: Any) -> bool:
+        """
+        Add or update a parameter for a job.
+        
+        Args:
+            job_id: Job ID
+            param_name: Parameter name
+            param_value: Parameter value (will be converted to string)
+            
+        Returns:
+            True if successful, False if job not found
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if job exists
+            cursor.execute("SELECT id FROM amr_jobs WHERE id = ?", (job_id,))
+            if cursor.fetchone() is None:
+                return False
+            
+            # Convert value to string
+            param_value_str = str(param_value)
+            
+            # Check if parameter already exists
+            cursor.execute(
+                "SELECT id FROM amr_job_parameters WHERE job_id = ? AND param_name = ?",
+                (job_id, param_name)
+            )
+            
+            if cursor.fetchone() is not None:
+                # Update existing parameter
+                cursor.execute(
+                    "UPDATE amr_job_parameters SET param_value = ? WHERE job_id = ? AND param_name = ?",
+                    (param_value_str, job_id, param_name)
+                )
+            else:
+                # Insert new parameter
+                cursor.execute(
+                    "INSERT INTO amr_job_parameters (job_id, param_name, param_value) VALUES (?, ?, ?)",
+                    (job_id, param_name, param_value_str)
+                )
+            
+            conn.commit()
+            return True
+    
+    def add_job_parameters(self, job_id: str, parameters: Dict[str, Any]) -> bool:
+        """
+        Add multiple parameters to a job.
+        
+        Args:
+            job_id: Job ID
+            parameters: Dictionary of parameter name-value pairs
+            
+        Returns:
+            True if successful, False if job not found
+        """
+        if not parameters:
+            return True
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if job exists
+            cursor.execute("SELECT id FROM amr_jobs WHERE id = ?", (job_id,))
+            if cursor.fetchone() is None:
+                return False
+            
+            try:
+                for param_name, param_value in parameters.items():
+                    # Convert value to string
+                    param_value_str = str(param_value)
+                    
+                    # Check if parameter already exists
+                    cursor.execute(
+                        "SELECT id FROM amr_job_parameters WHERE job_id = ? AND param_name = ?",
+                        (job_id, param_name)
+                    )
+                    
+                    if cursor.fetchone() is not None:
+                        # Update existing parameter
+                        cursor.execute(
+                            "UPDATE amr_job_parameters SET param_value = ? WHERE job_id = ? AND param_name = ?",
+                            (param_value_str, job_id, param_name)
+                        )
+                    else:
+                        # Insert new parameter
+                        cursor.execute(
+                            "INSERT INTO amr_job_parameters (job_id, param_name, param_value) VALUES (?, ?, ?)",
+                            (job_id, param_name, param_value_str)
+                        )
+                
+                # Commit is handled by the context manager
+                return True
+            
+            except Exception as e:
+                # Log the error but let the context manager handle the transaction
+                logger.error(f"Error adding job parameters: {str(e)}")
+                raise  # Re-raise to let context manager handle rollback
+    
+    def delete_job(self, job_id: str) -> bool:
+        """
+        Delete a job from the database.
+        
+        Args:
+            job_id: Job ID to delete
+            
+        Returns:
+            True if successful, False if job not found
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            try:
+                # Delete job parameters (foreign key constraint will handle this,
+                # but being explicit for clarity)
+                cursor.execute("DELETE FROM amr_job_parameters WHERE job_id = ?", (job_id,))
+                
+                # Delete job
+                cursor.execute("DELETE FROM amr_jobs WHERE id = ?", (job_id,))
+                
+                # Check if any rows were affected
+                deleted = cursor.rowcount > 0
+                
+                # Commit is handled by the context manager
+                return deleted
+            
+            except Exception as e:
+                # Log the error but let the context manager handle the transaction
+                logger.error(f"Error deleting job: {str(e)}")
+                raise  # Re-raise to let context manager handle rollback
+    
+    def count_jobs(self, status: Optional[str] = None) -> int:
+        """
+        Count the number of jobs, optionally filtered by status.
+        
+        Args:
+            status: Filter by job status
+            
+        Returns:
+            Number of jobs
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            if status:
+                cursor.execute("SELECT COUNT(*) FROM amr_jobs WHERE status = ?", (status,))
+            else:
+                cursor.execute("SELECT COUNT(*) FROM amr_jobs")
+            
+            return cursor.fetchone()[0]
+    
+    def close(self):
+        """Close all database connections in the pool"""
+        self.pool.close_all()
+        logger.info("Closed all database connections")

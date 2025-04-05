@@ -1,0 +1,2 @@
+genomic_id,sequence_count,any_resistance,any_susceptible,majority_vote,avg_resistant,avg_susceptible,avg_classification,methods_agree
+OXA-264,3,True,False,Resistant,0.9711862603823344,0.0288137104362249,Resistant,True

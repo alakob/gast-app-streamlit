@@ -1,0 +1,2 @@
+sequence_id,segment_count,start,end,any_resistance,any_resistance_count,majority_vote,majority_vote_count,avg_resistance_prob,avg_susceptible_prob,avg_classification
+fasta_27215228:27215228mrsa_S13_L001_R1_001_(paired),9,1,28874,Resistant,9,Resistant,9,0.8736930423312717,0.12630695766872824,Resistant

@@ -1,0 +1,80 @@
+{
+  "job_id": "e7be4f28-abfe-402d-81ab-f66b196418f3",
+  "status": "SUCCESSFUL",
+  "completed_at": "2025-04-04T12:13:45.746533",
+  "result_file_path": "/Users/alakob/projects/gast-app-streamlit/results/amr_predictions_e7be4f28-abfe-402d-81ab-f66b196418f3.json",
+  "predictions": [
+    {
+      "drug": "ampicillin",
+      "prediction": "Resistant",
+      "probability": 0.93,
+      "gene": "blaTEM-1"
+    },
+    {
+      "drug": "tetracycline",
+      "prediction": "Susceptible",
+      "probability": 0.98,
+      "gene": null
+    },
+    {
+      "drug": "ciprofloxacin",
+      "prediction": "Susceptible",
+      "probability": 0.71,
+      "gene": null
+    },
+    {
+      "drug": "gentamicin",
+      "prediction": "Susceptible",
+      "probability": 0.75,
+      "gene": null
+    },
+    {
+      "drug": "meropenem",
+      "prediction": "Susceptible",
+      "probability": 0.98,
+      "gene": null
+    }
+  ],
+  "results": {
+    "amr_genes": [
+      {
+        "gene": "dfrA",
+        "class": "dihydrofolate reductase",
+        "coverage": 94.38,
+        "identity": 98.72,
+        "resistance": [
+          "trimethoprim"
+        ]
+      },
+      {
+        "gene": "sul1",
+        "class": "sulfonamide resistance",
+        "coverage": 97.82,
+        "identity": 100.0,
+        "resistance": [
+          "sulfamethoxazole"
+        ]
+      },
+      {
+        "gene": "tet(A)",
+        "class": "tetracycline efflux",
+        "coverage": 95.46,
+        "identity": 99.93,
+        "resistance": [
+          "tetracycline"
+        ]
+      },
+      {
+        "gene": "blaTEM-1",
+        "class": "beta-lactamase",
+        "coverage": 98.76,
+        "identity": 99.21,
+        "resistance": [
+          "ampicillin",
+          "penicillin"
+        ]
+      }
+    ]
+  },
+  "model_id": "AMR-Pred-v2.0"
+}

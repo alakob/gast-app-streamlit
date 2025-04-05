@@ -1,0 +1,61 @@
+{
+  "job_id": "710af1b2-7657-402a-ac87-88e11f358e04",
+  "status": "SUCCESSFUL",
+  "completed_at": "2025-04-04T12:15:08.042583",
+  "result_file_path": "/Users/alakob/projects/gast-app-streamlit/results/amr_predictions_710af1b2-7657-402a-ac87-88e11f358e04.json",
+  "predictions": [
+    {
+      "drug": "ampicillin",
+      "prediction": "Resistant",
+      "probability": 0.91,
+      "gene": "tet(A)"
+    },
+    {
+      "drug": "tetracycline",
+      "prediction": "Resistant",
+      "probability": 0.9,
+      "gene": "tet(A)"
+    },
+    {
+      "drug": "ciprofloxacin",
+      "prediction": "Susceptible",
+      "probability": 0.77,
+      "gene": null
+    },
+    {
+      "drug": "gentamicin",
+      "prediction": "Resistant",
+      "probability": 0.97,
+      "gene": "dfrA"
+    },
+    {
+      "drug": "meropenem",
+      "prediction": "Susceptible",
+      "probability": 0.8,
+      "gene": null
+    }
+  ],
+  "results": {
+    "amr_genes": [
+      {
+        "gene": "dfrA",
+        "class": "dihydrofolate reductase",
+        "coverage": 94.38,
+        "identity": 98.72,
+        "resistance": [
+          "trimethoprim"
+        ]
+      },
+      {
+        "gene": "tet(A)",
+        "class": "tetracycline efflux",
+        "coverage": 95.46,
+        "identity": 99.93,
+        "resistance": [
+          "tetracycline"
+        ]
+      }
+    ]
+  },
+  "model_id": "AMR-Pred-v2.0"
+}

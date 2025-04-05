@@ -1,0 +1,60 @@
+/* Custom CSS for GAST app */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    height: 50px;
+    white-space: pre-wrap;
+    border-radius: 4px 4px 0 0;
+    padding: 10px 16px;
+    font-weight: 500;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #344758;
+    border-bottom: 2px solid #1cb3e0;
+}
+
+.stButton > button {
+    background-color: #1cb3e0;
+    color: white;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.stButton > button:hover {
+    background-color: #15a2cc;
+}
+
+h1, h2, h3 {
+    font-weight: 600;
+}
+
+.main .block-container {
+    padding-top: 2rem;
+}
+
+.stAlert {
+    border-radius: 4px;
+}
+
+/* Custom styling for the DNA title */
+.dna-title {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+}
+
+/* Custom blue gradient separator */
+.blue-gradient-hr {
+    height: 4px;
+    background-image: linear-gradient(to right, #3498DB, #2ECC71);
+    border: none;
+    margin-bottom: 30px;
+}

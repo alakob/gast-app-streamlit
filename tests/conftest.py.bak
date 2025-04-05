@@ -1,0 +1,175 @@
+"""Test fixtures for AMR Predictor tests."""
+
+import os
+import pytest
+import numpy as np
+from pathlib import Path
+from typing import Dict, Any
+
+from amr_predictor.core.utilities import (
+    load_fasta,
+    save_fasta,
+    load_predictions,
+    save_predictions
+)
+from amr_predictor.core.models import (
+    AMRModel,
+    AMRConfig
+)
+from amr_predictor.core.sequence import (
+    Sequence,
+    SequenceSet
+)
+
+# Register integration marker
+def pytest_addoption(parser):
+    """Add options to pytest."""
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests",
+    )
+
+def pytest_configure(config):
+    """Configure pytest."""
+    config.addinivalue_line(
+        "markers", "integration: mark test as an integration test"
+    )
+
+def pytest_collection_modifyitems(config, items):
+    """Skip integration tests unless --run-integration is specified."""
+    if not config.getoption("--run-integration"):
+        skip_integration = pytest.mark.skip(reason="Need --run-integration option to run")
+        for item in items:
+            if "integration" in item.keywords:
+                item.add_marker(skip_integration)
+
+# Test data paths
+TEST_DATA_DIR = Path(__file__).parent / "data"
+TEST_OUTPUT_DIR = Path(__file__).parent / "output"
+
+# Test sequence data
+TEST_SEQUENCES = {
+    "seq1": "ATCGATCGATCGATCGATCGATCGATCGATCG",
+    "seq2": "GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA",
+    "seq3": "TAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGC"
+}
+
+# Test prediction data
+TEST_PREDICTIONS = {
+    "seq1": {
+        "amoxicillin": 0.8,
+        "ciprofloxacin": 0.2,
+        "tetracycline": 0.6
+    },
+    "seq2": {
+        "amoxicillin": 0.3,
+        "ciprofloxacin": 0.7,
+        "tetracycline": 0.4
+    },
+    "seq3": {
+        "amoxicillin": 0.5,
+        "ciprofloxacin": 0.5,
+        "tetracycline": 0.8
+    }
+}
+
+@pytest.fixture
+def test_data_dir() -> Path:
+    """Provide test data directory."""
+    return TEST_DATA_DIR
+
+@pytest.fixture
+def test_output_dir() -> Path:
+    """Provide test output directory."""
+    return TEST_OUTPUT_DIR
+
+@pytest.fixture
+def test_sequences() -> Dict[str, str]:
+    """Provide test sequence data."""
+    return TEST_SEQUENCES
+
+@pytest.fixture
+def test_predictions() -> Dict[str, Dict[str, float]]:
+    """Provide test prediction data."""
+    return TEST_PREDICTIONS
+
+@pytest.fixture
+def test_fasta_file(test_data_dir: Path, test_sequences: Dict[str, str]) -> Path:
+    """Create test FASTA file."""
+    fasta_path = test_data_dir / "test.fasta"
+    save_fasta(test_sequences, fasta_path)
+    return fasta_path
+
+@pytest.fixture
+def test_prediction_file(test_data_dir: Path, test_predictions: Dict[str, Dict[str, float]]) -> Path:
+    """Create test prediction file."""
+    pred_path = test_data_dir / "test_predictions.json"
+    save_predictions(test_predictions, pred_path)
+    return pred_path
+
+@pytest.fixture
+def test_sequence_set(test_sequences: Dict[str, str]) -> SequenceSet:
+    """Create test sequence set."""
+    return SequenceSet({
+        name: Sequence(name, seq)
+        for name, seq in test_sequences.items()
+    })
+
+@pytest.fixture
+def test_model_config() -> AMRConfig:
+    """Create test model configuration."""
+    return AMRConfig(
+        model_name="test_model",
+        model_type="transformer",
+        max_length=512,
+        batch_size=32,
+        num_classes=3,
+        learning_rate=1e-5,
+        num_epochs=3
+    )
+
+@pytest.fixture
+def test_model(test_model_config: AMRConfig) -> AMRModel:
+    """Create test model."""
+    return AMRModel(test_model_config)
+
+@pytest.fixture
+def test_aggregation_data(test_data_dir: Path) -> Dict[str, Any]:
+    """Create test aggregation data."""
+    return {
+        "predictions": [
+            {
+                "file": str(test_data_dir / "pred1.json"),
+                "weight": 0.5
+            },
+            {
+                "file": str(test_data_dir / "pred2.json"),
+                "weight": 0.5
+            }
+        ],
+        "output_file": str(test_data_dir / "aggregated.json"),
+        "method": "weighted_average"
+    }
+
+@pytest.fixture
+def test_sequence_processing_data(test_data_dir: Path) -> Dict[str, Any]:
+    """Create test sequence processing data."""
+    return {
+        "prediction_file": str(test_data_dir / "test_predictions.json"),
+        "output_file": str(test_data_dir / "processed.json"),
+        "threshold": 0.5,
+        "min_confidence": 0.7
+    }
+
+@pytest.fixture
+def test_visualization_data(test_data_dir: Path) -> Dict[str, Any]:
+    """Create test visualization data."""
+    return {
+        "prediction_file": str(test_data_dir / "test_predictions.json"),
+        "output_dir": str(test_data_dir / "visualizations"),
+        "format": "html",
+        "include_heatmap": True,
+        "include_distribution": True
+    } 

@@ -1,0 +1,13 @@
+##gff-version 3
+##sequence-region contig1 1 240
+##sequence-region contig2 1 240
+contig1	Bakta	region	1	240	.	+	.	ID=contig1;Name=contig1;complete=true
+contig1	Bakta	CDS	1	60	.	+	0	ID=CDS_1;Name=hypothetical protein;locus_tag=ECO_00001;product=hypothetical protein;inference=ab initio prediction
+contig1	Bakta	gene	1	60	.	+	.	ID=gene_1;Name=hyp1;locus_tag=ECO_00001;gene=hyp1
+contig1	Bakta	CDS	80	120	.	-	0	ID=CDS_2;Name=DNA polymerase III;locus_tag=ECO_00002;product=DNA polymerase III;inference=similar to AA sequence:UniProtKB:P0A988
+contig1	Bakta	gene	80	120	.	-	.	ID=gene_2;Name=dnaE;locus_tag=ECO_00002;gene=dnaE
+contig1	Bakta	tRNA	150	180	.	+	.	ID=tRNA_1;Name=tRNA-Ala;locus_tag=ECO_00003;product=tRNA-Ala(GGC)
+contig2	Bakta	region	1	240	.	+	.	ID=contig2;Name=contig2;complete=true
+contig2	Bakta	CDS	10	90	.	+	0	ID=CDS_3;Name=ATP synthase;locus_tag=ECO_00004;product=ATP synthase subunit alpha;inference=similar to AA sequence:UniProtKB:P0ABB0
+contig2	Bakta	gene	10	90	.	+	.	ID=gene_3;Name=atpA;locus_tag=ECO_00004;gene=atpA
+contig2	Bakta	rRNA	120	200	.	+	.	ID=rRNA_1;Name=16S ribosomal RNA;locus_tag=ECO_00005;product=16S ribosomal RNA 

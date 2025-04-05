@@ -222,3 +222,169 @@ def create_unique_job_name(prefix: str = "streamlit_job") -> str:
     
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     return f"{prefix}_{timestamp}"
+
+
+def format_column_names(df):
+    """
+    Convert DataFrame column names from snake_case to Title Case for better UI display.
+    
+    Args:
+        df: Original DataFrame
+        
+    Returns:
+        DataFrame with column names in Title Case
+    """
+    if df.empty:
+        return df
+    
+    # Create a dictionary to map original column names to title case
+    column_mapping = {}
+    for col in df.columns:
+        # Handle special case for columns with underscores
+        if '_' in col:
+            # Split the column name by underscore and capitalize each word
+            words = col.split('_')
+            title_col = ' '.join(word.capitalize() for word in words)
+            column_mapping[col] = title_col
+        else:
+            # Handle camelCase columns (e.g., jobId)
+            if re.match(r'[a-z]+[A-Z][a-z]*', col):  # camelCase pattern
+                # Insert space before capital letters
+                title_col = re.sub(r'([a-z])([A-Z])', r'\1 \2', col)
+                # Capitalize first letters of all words
+                title_col = ' '.join(word.capitalize() for word in title_col.split())
+                column_mapping[col] = title_col
+            else:
+                # Simple capitalization for plain lowercase columns
+                column_mapping[col] = col.capitalize()
+    
+    # Rename columns
+    return df.rename(columns=column_mapping)
+
+
+def filter_dataframe(df):
+    """
+    Auto-generates UI components to filter a dataframe.
+    Based on: https://blog.streamlit.io/auto-generate-a-dataframe-filtering-ui-in-streamlit-with-filter_dataframe/
+    
+    Args:
+        df: Pandas dataframe to filter
+        
+    Returns:
+        Filtered dataframe
+    """
+    import streamlit as st
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime
+    
+    # Make a copy of the dataframe to avoid modifying the original
+    df = df.copy()
+    
+    # Try to convert object columns to datetime if possible
+    for col in df.select_dtypes(include=['object']).columns:
+        try:
+            df[col] = pd.to_datetime(df[col])
+        except Exception:
+            pass
+    
+    # Create a filter section using an expander
+    with st.expander("Filter Data"):
+        # Add a "Select all" checkbox for each column type
+        filter_container = st.container()
+        
+        # Split the filters into columns for better UI layout
+        filter_columns = st.columns(3)
+        column_index = 0
+        
+        # Categorize columns by type for different filter controls
+        categorical_cols = list(df.select_dtypes(include=['object', 'category']).columns)
+        numeric_cols = list(df.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns)
+        date_cols = list(df.select_dtypes(include=['datetime64', 'datetime64[ns, UTC]']).columns)
+        bool_cols = list(df.select_dtypes(include=['bool']).columns)
+        
+        # Add a filter UI element for each column based on its type
+        for column in df.columns:
+            # Get the current column to add filter controls
+            current_column = filter_columns[column_index % 3]
+            column_index += 1
+            
+            # For categorical columns - use multiselect
+            if column in categorical_cols:
+                with current_column:
+                    # Get all unique values in the column
+                    unique_values = df[column].dropna().unique()
+                    # Create a multiselect widget
+                    selected_values = st.multiselect(
+                        f"Filter by {column}",
+                        options=sorted(unique_values),
+                        default=None,
+                        key=f"filter_{column}"
+                    )
+                    # Apply filter if values are selected
+                    if selected_values:
+                        df = df[df[column].isin(selected_values)]
+            
+            # For numeric columns - use range sliders
+            elif column in numeric_cols:
+                with current_column:
+                    # Get min and max values
+                    min_value = float(df[column].min())
+                    max_value = float(df[column].max())
+                    
+                    # Handle case where min and max are identical (slider requires different values)
+                    if min_value == max_value:
+                        st.info(f"All values in '{column}' are identical: {min_value}")
+                    else:
+                        # Set step size based on range
+                        range_size = max_value - min_value
+                        step = 1.0
+                        if range_size > 1000:
+                            step = 10.0
+                        elif range_size < 1:
+                            step = 0.01
+                        
+                        # Create a slider for the range
+                        value_range = st.slider(
+                            f"Filter by {column}",
+                            min_value=min_value,
+                            max_value=max_value,
+                            value=(min_value, max_value),
+                            step=step,
+                            key=f"filter_{column}"
+                        )
+                        # Apply filter based on range
+                        df = df[(df[column] >= value_range[0]) & (df[column] <= value_range[1])]
+            
+            # For datetime columns - use date range pickers
+            elif column in date_cols:
+                with current_column:
+                    try:
+                        # Convert to datetime if not already
+                        min_date = df[column].min().date()
+                        max_date = df[column].max().date()
+                        
+                        # Create date inputs for range
+                        start_date = st.date_input(f"Start date for {column}", min_date, key=f"start_{column}")
+                        end_date = st.date_input(f"End date for {column}", max_date, key=f"end_{column}")
+                        
+                        # Convert date inputs to datetime for comparison
+                        if start_date and end_date:
+                            # Apply filter based on dates
+                            # Convert dates to pandas datetime for consistent comparison
+                            start_datetime = pd.to_datetime(start_date)
+                            end_datetime = pd.to_datetime(end_date)
+                            # Add a day to end date to make it inclusive
+                            end_datetime = end_datetime + pd.Timedelta(days=1)
+                            df = df[(df[column] >= start_datetime) & (df[column] <= end_datetime)]
+                    except Exception as e:
+                        st.warning(f"Error filtering date column {column}: {e}")
+            
+            # For boolean columns - use a simple toggle
+            elif column in bool_cols:
+                with current_column:
+                    bool_value = st.checkbox(f"Show only where {column} is True", key=f"filter_{column}")
+                    if bool_value:
+                        df = df[df[column] == True]
+    
+    return df

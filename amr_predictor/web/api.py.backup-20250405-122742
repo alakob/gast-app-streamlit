@@ -6,19 +6,16 @@ enabling integration with web applications.
 """
 
 import os
-import psycopg2
+import sqlite3
 import tempfile
 import json
 import uuid
-# import asyncio  # Commented out temporarily
 from typing import List, Dict, Optional, Any, Union
 from datetime import datetime
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Query, Path, Body, Request, Form
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, JSONResponse
-# SSE temporarily disabled
-# from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 import logging
 
@@ -80,7 +77,7 @@ logger.info("Initialized AMR job repository for job storage")
 # Pydantic models for API
 class PredictionRequest(BaseModel):
     """Request model for prediction endpoint"""
-    model_name: str = Field(default="alakob/DraGNOME-50m-v1", description="HuggingFace model name or path")
+    model_name: str = Field(default="alakob/DraGNOME-2.5b-v1", description="HuggingFace model name or path")
     batch_size: int = Field(default=8, description="Batch size for predictions", ge=1)
     segment_length: int = Field(default=6000, description="Maximum segment length, 0 to disable splitting", ge=0)
     segment_overlap: int = Field(default=0, description="Overlap between segments", ge=0)
@@ -173,8 +170,8 @@ async def predict_task(job_id: str, fasta_path: str, model_name: str, batch_size
         enable_sequence_aggregation: Whether to enable sequence-level aggregation of results
     """
     try:
-        # Create output file path with CSV extension to match the actual content format
-        output_file = os.path.join(RESULTS_DIR, f"amr_predictions_{job_id}.csv")
+        # Create output file path
+        output_file = os.path.join(RESULTS_DIR, f"amr_predictions_{job_id}.tsv")
         
         # Initialize progress tracker
         progress_tracker = WebProgressTracker(job_id=job_id)
@@ -215,10 +212,10 @@ async def predict_task(job_id: str, fasta_path: str, model_name: str, batch_size
                 else:
                     # Fallback: Use naming convention to find aggregated file
                     base_output_file = output_file
-                    if base_output_file.lower().endswith('.csv'):
-                        aggregated_file = base_output_file[:-4] + '_aggregated.csv'
+                    if base_output_file.lower().endswith('.tsv'):
+                        aggregated_file = base_output_file[:-4] + '_aggregated.tsv'
                     else:
-                        aggregated_file = base_output_file + '_aggregated.csv'
+                        aggregated_file = base_output_file + '_aggregated.tsv'
                     
                     # Verify the file exists
                     if not os.path.exists(aggregated_file):
@@ -413,26 +410,11 @@ async def visualize_task(job_id: str, input_file: str, step_size: int):
 
 
 # API endpoints
-
-@app.get("/health")
-async def health_check():
-    """
-    Simple health check endpoint to verify the API is running.
-    
-    Returns:
-        Health status dictionary
-    """
-    return {
-        "status": "ok",
-        "timestamp": datetime.now().isoformat(),
-        "environment": os.getenv('ENVIRONMENT', 'dev'),
-        "database": "PostgreSQL"
-    }
 @app.post("/predict", response_model=JobResponse)
 async def predict(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    model_name: str = Form("alakob/DraGNOME-50m-v1"),
+    model_name: str = Form("alakob/DraGNOME-2.5b-v1"),
     batch_size: int = Form(8),
     segment_length: int = Form(6000),
     segment_overlap: int = Form(0),
@@ -485,7 +467,7 @@ async def predict(
     }
     
     # Create the job in the repository
-    job_repository.create_job(
+    job = job_repository.create_job(
         job_id=job_id,
         initial_status="Submitted",
         additional_info=additional_info
@@ -505,8 +487,6 @@ async def predict(
         enable_sequence_aggregation=params.enable_sequence_aggregation
     )
     
-    # Retrieve the job data to return to client
-    job = job_repository.get_job(job_id)
     return job
 
 
@@ -552,7 +532,7 @@ async def aggregate(
     }
     
     # Create the job in the repository
-    job_repository.create_job(
+    job = job_repository.create_job(
         job_id=job_id,
         initial_status="Submitted",
         additional_info=additional_info
@@ -566,8 +546,6 @@ async def aggregate(
         model_suffix=model_suffix
     )
     
-    # Retrieve the job data to return to client
-    job = job_repository.get_job(job_id)
     return job
 
 
@@ -605,7 +583,7 @@ async def process_sequence(
     }
     
     # Create the job in the repository
-    job_repository.create_job(
+    job = job_repository.create_job(
         job_id=job_id,
         initial_status="Submitted",
         additional_info=additional_info
@@ -619,8 +597,6 @@ async def process_sequence(
         resistance_threshold=resistance_threshold
     )
     
-    # Retrieve the job data to return to client
-    job = job_repository.get_job(job_id)
     return job
 
 
@@ -658,7 +634,7 @@ async def visualize(
     }
     
     # Create the job in the repository
-    job_repository.create_job(
+    job = job_repository.create_job(
         job_id=job_id,
         initial_status="Submitted",
         additional_info=additional_info
@@ -672,75 +648,8 @@ async def visualize(
         step_size=step_size
     )
     
-    # Retrieve the job data to return to client
-    job = job_repository.get_job(job_id)
     return job
 
-
-# SSE endpoint temporarily disabled
-# @app.get("/jobs/{job_id}/stream")
-# async def stream_job_status(job_id: str = Path(..., description="Job ID to stream status for")):
-#     """
-#     Stream job status updates using Server-Sent Events.
-#     
-#     This endpoint keeps the connection open and sends updates 
-#     whenever the job status changes until completion.
-#     
-#     Args:
-#         job_id: Job ID to stream status for
-#         
-#     Returns:
-#         EventSourceResponse with job status updates
-#     """
-#     async def event_generator():
-#         previous_status = None
-#         previous_progress = None
-#         
-#         error_count = 0
-#         max_errors = 5
-#         
-#         while True:
-#             try:
-#                 # Get current job status
-#                 job = job_repository.get_job(job_id)
-#                 
-#                 if not job:
-#                     # Job not found, yield error and break
-#                     yield {"event": "error", "data": json.dumps({"error": f"Job {job_id} not found"})}
-#                     break
-#                 
-#                 # Check if status or progress changed
-#                 status_changed = previous_status is None or job['status'] != previous_status
-#                 progress_changed = previous_progress is None or job.get('progress', 0) != previous_progress
-#                 
-#                 # Send update if anything changed
-#                 if status_changed or progress_changed:
-#                     yield {"event": "status_update", "data": json.dumps(job)}
-#                     previous_status = job['status']
-#                     previous_progress = job.get('progress', 0)
-#                     
-#                     # If job is complete or failed, end stream
-#                     if job['status'] in ['Completed', 'Error']:
-#                         break
-#                 
-#                 # Sleep briefly to avoid excessive database queries
-#                 await asyncio.sleep(1)
-#                 
-#             except Exception as e:
-#                 logger.error(f"Error in SSE stream for job {job_id}: {str(e)}")
-#                 error_count += 1
-#                 
-#                 # Yield error to client
-#                 yield {"event": "error", "data": json.dumps({"error": str(e)})}
-#                 
-#                 # Break after too many consecutive errors
-#                 if error_count >= max_errors:
-#                     break
-#                     
-#                 # Backoff strategy
-#                 await asyncio.sleep(2)
-#     
-#     return EventSourceResponse(event_generator())
 
 @app.get("/jobs/{job_id}", response_model=JobResponse)
 async def get_job_status(job_id: str = Path(..., description="Job ID to check")):
@@ -758,8 +667,8 @@ async def get_job_status(job_id: str = Path(..., description="Job ID to check"))
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
         return job
-    except psycopg2.ProgrammingError as e:
-        # Handle "connection already closed" error
+    except sqlite3.ProgrammingError as e:
+        # Handle "Cannot operate on a closed database" error
         logger.error(f"Database error when retrieving job {job_id}: {str(e)}")
         
         # Try with a fresh database connection
@@ -782,21 +691,18 @@ async def get_job_status(job_id: str = Path(..., description="Job ID to check"))
 @app.get("/jobs/{job_id}/download")
 async def download_result(
     job_id: str = Path(..., description="Job ID to download results for"),
-    file_type: str = Query("regular", description="Type of file to download: 'regular', 'aggregated', or 'both'")
+    file_type: str = Query("regular", description="Type of file to download: 'regular' or 'aggregated'")
 ):
     """
-    Download the result file(s) for a job.
+    Download the result file for a job.
     
     Args:
         job_id: Job ID to download results for
-        file_type: Type of file to download ('regular', 'aggregated', or 'both')
+        file_type: Type of file to download ('regular' or 'aggregated')
         
     Returns:
-        File response with the requested result file(s)
+        File response with the requested result file
     """
-    import zipfile
-    import shutil
-    
     job = job_repository.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
@@ -804,42 +710,8 @@ async def download_result(
     if job.get("status") != "Completed":
         raise HTTPException(status_code=400, detail=f"Job {job_id} is not completed")
     
-    # Check if we need to return both files as a ZIP archive
-    if file_type.lower() == "both":
-        # Verify both files exist
-        if not job.get("result_file") or not os.path.exists(job.get("result_file", "")):
-            raise HTTPException(status_code=404, detail=f"Regular result file for job {job_id} not found")
-        
-        if not job.get("aggregated_result_file") or not os.path.exists(job.get("aggregated_result_file", "")):
-            raise HTTPException(status_code=404, detail=f"Aggregated result file for job {job_id} not found")
-        
-        # Create a temporary ZIP file
-        zip_path = os.path.join(tempfile.gettempdir(), f"amr_results_{job_id}.zip")
-        
-        try:
-            with zipfile.ZipFile(zip_path, 'w') as zipf:
-                # Add regular result file
-                regular_file_name = os.path.basename(job["result_file"])
-                zipf.write(job["result_file"], arcname=regular_file_name)
-                
-                # Add aggregated result file
-                aggregated_file_name = os.path.basename(job["aggregated_result_file"])
-                zipf.write(job["aggregated_result_file"], arcname=aggregated_file_name)
-            
-            # Return the ZIP file
-            return FileResponse(
-                path=zip_path, 
-                filename=f"amr_results_{job_id}.zip",
-                media_type="application/zip",
-                background=BackgroundTasks([lambda: os.remove(zip_path)])
-            )
-        
-        except Exception as e:
-            logger.error(f"Error creating ZIP archive: {str(e)}")
-            raise HTTPException(status_code=500, detail="Error creating download package")
-    
-    # Handle single file downloads as before
-    elif file_type.lower() == "aggregated":
+    # Determine which file to return based on file_type parameter
+    if file_type.lower() == "aggregated":
         if not job.get("aggregated_result_file") or not os.path.exists(job.get("aggregated_result_file", "")):
             raise HTTPException(status_code=404, detail=f"Aggregated result file for job {job_id} not found")
         file_path = job["aggregated_result_file"]

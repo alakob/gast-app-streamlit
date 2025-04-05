@@ -29,9 +29,9 @@ class AMRJobRepository:
         Initialize the AMR job repository.
         
         Args:
-            db_path: Ignored for PostgreSQL, kept for backwards compatibility
+            db_path: Path to the SQLite database. If None, uses default.
         """
-        self.db_manager = AMRDatabaseManager()
+        self.db_manager = AMRDatabaseManager(db_path)
         logger.info("Initialized AMR job repository")
     
     def create_job(self, job_id: str, initial_status: str = "Submitted", 
@@ -47,18 +47,13 @@ class AMRJobRepository:
         Returns:
             The created job data
         """
-        # Create job data dictionary for PostgreSQL interface
-        job_data_dict = {
-            'id': job_id,  # PostgreSQL uses 'id' field
-            'job_id': job_id,  # For API compatibility
-            'status': initial_status,
-            'progress': 0.0,
-            'start_time': datetime.now(),
-            'additional_info': additional_info
-        }
-        
         # Create basic job record
-        job_data = self.db_manager.save_job(job_data_dict)
+        job_data = self.db_manager.save_job(
+            job_id=job_id,
+            status=initial_status,
+            progress=0.0,
+            additional_info=additional_info
+        )
         
         logger.info(f"Created AMR job: {job_id}")
         return job_data
@@ -113,18 +108,10 @@ class AMRJobRepository:
             
             if job_data is None:
                 logger.warning(f"Job not found: {job_id}")
-                return None
-            
-            # Convert datetime objects to strings for API compatibility
-            if 'start_time' in job_data and isinstance(job_data['start_time'], datetime):
-                job_data['start_time'] = job_data['start_time'].isoformat()
-                
-            if 'end_time' in job_data and job_data['end_time'] and isinstance(job_data['end_time'], datetime):
-                job_data['end_time'] = job_data['end_time'].isoformat()
                 
             return job_data
-        except psycopg2.Error as e:
-            if "connection" in str(e).lower():
+        except sqlite3.ProgrammingError as e:
+            if "Cannot operate on a closed database" in str(e):
                 logger.warning(f"Reconnecting to database for job {job_id}")
                 # Create a fresh connection
                 from ..core.database_manager import AMRDatabaseManager
@@ -147,17 +134,7 @@ class AMRJobRepository:
         Returns:
             List of job data dictionaries
         """
-        jobs = self.db_manager.get_jobs(status=status, limit=limit, offset=offset)
-        
-        # Convert datetime objects to strings for API compatibility
-        for job in jobs:
-            if 'start_time' in job and isinstance(job['start_time'], datetime):
-                job['start_time'] = job['start_time'].isoformat()
-                
-            if 'end_time' in job and job['end_time'] and isinstance(job['end_time'], datetime):
-                job['end_time'] = job['end_time'].isoformat()
-                
-        return jobs
+        return self.db_manager.get_jobs(status=status, limit=limit, offset=offset)
     
     def add_job_parameter(self, job_id: str, param_name: str, param_value: Any) -> bool:
         """

@@ -6,6 +6,9 @@ ENV LANG en_US.utf8
 
 # Copy initialization scripts
 COPY ./init/create-multiple-databases.sh /docker-entrypoint-initdb.d/
+COPY ./init/init-amr-schema.sql /docker-entrypoint-initdb.d/
+COPY ./init/import-sql-schema.sh /docker-entrypoint-initdb.d/
 
 # Make initialization scripts executable
-RUN chmod +x /docker-entrypoint-initdb.d/create-multiple-databases.sh
+RUN chmod +x /docker-entrypoint-initdb.d/create-multiple-databases.sh \
+    && chmod +x /docker-entrypoint-initdb.d/import-sql-schema.sh

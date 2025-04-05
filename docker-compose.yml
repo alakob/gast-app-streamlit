@@ -1,0 +1,105 @@
+
+services:
+  # PostgreSQL Database
+  postgres:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    container_name: amr_postgres
+    environment:
+      - POSTGRES_USER=${PG_USER:-postgres}
+      - POSTGRES_PASSWORD=${PG_PASSWORD:-postgres}
+      - POSTGRES_MULTIPLE_DATABASES=amr_predictor_dev,amr_predictor_test,amr_predictor_prod
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - amr-network
+      
+  # pgAdmin - PostgreSQL Administration Tool
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: amr_pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@amrpredictor.org}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin}
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - MASTER_PASSWORD_REQUIRED=False
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - amr-network
+      
+  # AMR Predictor API (includes Bakta client)
+  amr-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api.dev  # Using development Dockerfile with hot reload
+    container_name: amr_api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=${PG_USER:-postgres}
+      - PG_PASSWORD=${PG_PASSWORD:-postgres}
+      - PG_DATABASE_DEV=amr_predictor_dev
+      - PG_DATABASE_TEST=amr_predictor_test
+      - PG_DATABASE_PROD=amr_predictor_prod
+      - ENVIRONMENT=${ENVIRONMENT:-dev}
+      - BAKTA_API_URL=${BAKTA_API_URL:-https://bakta.computational.bio/api/v1}
+      - BAKTA_API_KEY=${BAKTA_API_KEY:-}
+    volumes:
+      - ./amr_predictor:/app/amr_predictor
+      - result_data:/app/results
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - amr-network
+      
+  # Streamlit Frontend
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: amr_streamlit
+    depends_on:
+      - amr-api
+    environment:
+      - AMR_API_URL=http://amr-api:8000
+    volumes:
+      - ./streamlit:/app/streamlit
+      - ./amr_predictor:/app/amr_predictor
+      - result_data:/app/results
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    networks:
+      - amr-network
+
+volumes:
+  postgres_data:
+    name: amr_postgres_data
+  result_data:
+    name: amr_result_data
+  pgadmin_data:
+    name: amr_pgadmin_data
+
+networks:
+  amr-network:
+    name: amr-network

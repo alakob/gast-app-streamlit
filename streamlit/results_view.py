@@ -17,6 +17,9 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
+# Import column formatting utility
+from utils import format_column_names
+
 from amr_predictor.bakta.database import DatabaseManager
 from amr_predictor.dao.amr_job_dao import AMRJobDAO
 from amr_predictor.models.amr_job import AMRJob
@@ -214,9 +217,73 @@ def view_amr_prediction_result(job: AMRJob, db_manager: DatabaseManager) -> None
     # Check if result file exists
     if job.result_file_path and os.path.exists(job.result_file_path):
         try:
-            # Load results from file
-            with open(job.result_file_path, 'r') as f:
-                results = json.load(f)
+            # Load results from file - handle both JSON and TSV formats
+            results = None
+            
+            # Enhanced file format detection and logging
+            logger.info(f"Processing result file: {job.result_file_path}")
+            
+            # First check file extension
+            if job.result_file_path.lower().endswith('.json'):
+                # Handle JSON format
+                with open(job.result_file_path, 'r') as f:
+                    content = f.read()
+                    logger.info(f"File content preview: {content[:100]}")
+                    results = json.loads(content)
+                    st.info(f"Loaded JSON results from {job.result_file_path}")
+                    logger.info(f"Successfully parsed JSON with {len(results.keys() if isinstance(results, dict) else results)} top-level items")
+            elif job.result_file_path.lower().endswith(('.tsv', '.csv')):
+                # Content-based separator detection - don't trust file extension
+                try:
+                    import pandas as pd
+                    
+                    # Read a small sample of the file to detect the actual delimiter
+                    with open(job.result_file_path, 'r') as f:
+                        sample = f.read(1000)  # Read first 1000 characters as sample
+                    
+                    logger.info(f"File content preview: {sample[:100]}")
+                    
+                    # Count delimiters to auto-detect format
+                    tab_count = sample.count('\t')
+                    comma_count = sample.count(',')
+                    logger.info(f"Format detection - tabs: {tab_count}, commas: {comma_count}")
+                    
+                    # Use the more frequent delimiter
+                    if comma_count > tab_count:
+                        separator = ','
+                        logger.warning(f"File has .tsv extension but appears to be CSV format (using comma separator)")
+                    else:
+                        separator = '\t'
+                        logger.info(f"Using tab separator for {job.result_file_path}")
+                    
+                    # Load the file with the detected separator
+                    df = pd.read_csv(job.result_file_path, sep=separator)
+                    
+                    # Log column names for debugging
+                    logger.info(f"Loaded columns: {', '.join(df.columns.tolist())}")
+                    st.info(f"Loaded tabular data from {job.result_file_path} with {len(df)} rows and {len(df.columns)} columns")
+                    
+                    # Convert DataFrame to a structured format similar to expected JSON
+                    results = {
+                        "predictions": df.to_dict(orient='records'),
+                        "format": "tabular",
+                        "source_file": job.result_file_path
+                    }
+                except Exception as e:
+                    st.error(f"Error loading TSV file: {str(e)}")
+                    # Create an empty result structure
+                    results = {"predictions": [], "error": str(e)}
+            else:
+                # For other file types, try to read as text
+                try:
+                    with open(job.result_file_path, 'r') as f:
+                        content = f.read()
+                    st.info(f"Loaded text content from {job.result_file_path}")
+                    # Create a simple result structure with the text content
+                    results = {"text_content": content, "format": "text"}
+                except Exception as e:
+                    st.error(f"Error reading file: {str(e)}")
+                    results = {"error": str(e)}
             
             # Sequence Analysis Tab - Output from /sequence endpoint
             with sequence_tab:
@@ -259,12 +326,27 @@ def view_amr_prediction_result(job: AMRJob, db_manager: DatabaseManager) -> None
                 
                 # Check if we have predictions in the expected format
                 has_predictions = False
+                predictions = []
                 
-                # Look for predictions in both the top level and in a nested results structure
-                if isinstance(results, dict):
+                # Display the file format information
+                if results and isinstance(results, dict):
+                    file_format = results.get("format", "unknown")
+                    source_file = results.get("source_file", job.result_file_path)
+                    st.caption(f"Data source: {source_file} (Format: {file_format})")
+                
+                # Handle tabular data format (from TSV/CSV)
+                if results and isinstance(results, dict) and results.get("format") == "tabular":
+                    if "predictions" in results and isinstance(results["predictions"], list):
+                        predictions = results["predictions"]
+                        has_predictions = True
+                        st.success(f"Loaded {len(predictions)} prediction records from tabular data")
+                
+                # Look for predictions in both the top level and in a nested results structure (JSON format)
+                elif isinstance(results, dict):
                     if "predictions" in results and results["predictions"]:
                         predictions = results["predictions"]
                         has_predictions = True
+                        st.success(f"Loaded {len(predictions)} prediction records from JSON data")
                     elif "results" in results and isinstance(results["results"], dict):
                         if "predictions" in results["results"] and results["results"]["predictions"]:
                             # Handle both list and dict formats of predictions
@@ -281,20 +363,77 @@ def view_amr_prediction_result(job: AMRJob, db_manager: DatabaseManager) -> None
                                         predictions.append({"drug": drug, "prediction": pred_info})
                                 has_predictions = True
                 
+                # For text content format 
+                elif results and isinstance(results, dict) and "text_content" in results:
+                    text_content = results["text_content"]
+                    st.text_area("Raw File Content", text_content, height=300)
+                    
+                    # Log content sample for debugging
+                    logger.info(f"Raw text content preview: {text_content[:100]}")
+                    
+                    # Auto-detect delimiter
+                    tab_count = text_content.count('\t')
+                    comma_count = text_content.count(',')
+                    logger.info(f"Content format detection - tabs: {tab_count}, commas: {comma_count}")
+                    
+                    # Try to parse as tabular data with auto-detected delimiter
+                    try:
+                        import io
+                        import pandas as pd
+                        
+                        # Choose delimiter based on frequency
+                        delimiter = '\t' if tab_count > comma_count else ','
+                        logger.info(f"Using {delimiter} as delimiter for parsing text content")
+                        
+                        df = pd.read_csv(io.StringIO(text_content), sep=delimiter)
+                        logger.info(f"Successfully parsed with columns: {', '.join(df.columns.tolist())}")
+                        st.success(f"Parsed tabular data with {len(df)} rows and {len(df.columns)} columns")
+                        st.dataframe(df)
+                        predictions = df.to_dict(orient='records')
+                        has_predictions = True
+                    except Exception as e:
+                        logger.error(f"Failed to parse as tabular data: {str(e)}")
+                
                 if has_predictions:
-                    # View toggle options
+                    # View toggle options with additional options for tabular data
+                    view_options = ["Table", "JSON"]
+                    if results and isinstance(results, dict) and results.get("format") == "tabular":
+                        view_options = ["Interactive Table", "Raw Table", "JSON"]
+                    
                     view_mode = st.radio(
                         "View as:",
-                        options=["Table", "JSON"],
+                        options=view_options,
                         index=0,
                         horizontal=True,
                         key=f"amr_view_mode_{job.id}"
                     )
                     
-                    if view_mode == "Table":
-                        # Display predictions in a table format
-                        # Normalize the prediction data for better display
-                        table_data = []
+                    if view_mode in ["Table", "Interactive Table"]:
+                        # For tabular data from TSV/CSV, show interactive table with filtering
+                        if results and isinstance(results, dict) and results.get("format") == "tabular" and view_mode == "Interactive Table":
+                            import pandas as pd
+                            # Convert predictions back to DataFrame for better display
+                            df = pd.DataFrame(predictions)
+                            # Format column names to Title Case
+                            df = format_column_names(df)
+                            st.dataframe(df, use_container_width=True, height=400)
+                            
+                            # Additional statistics
+                            if len(df) > 0 and "resistance_score" in df.columns:
+                                st.subheader("Resistance Statistics")
+                                resistant_count = df[df["resistance_score"] > 0.5].shape[0]
+                                st.metric("Resistant Drugs", resistant_count, f"{resistant_count/len(df):.1%}")
+                        
+                        # Traditional table format (normalized for display)
+                        elif view_mode == "Raw Table" and results and isinstance(results, dict) and results.get("format") == "tabular":
+                            # Show the raw dataframe
+                            import pandas as pd
+                            raw_df = pd.read_csv(results.get("source_file"), sep='\t')
+                            st.dataframe(raw_df, use_container_width=True)
+                        else:
+                            # Display predictions in a table format
+                            # Normalize the prediction data for better display
+                            table_data = []
                         
                         for pred in predictions:
                             # Handle different prediction data formats
@@ -328,6 +467,8 @@ def view_amr_prediction_result(job: AMRJob, db_manager: DatabaseManager) -> None
                         display_cols = ["Drug", "Prediction", "Probability %", "Gene"]
                         display_data = [{k: v for k, v in row.items() if k in display_cols} for row in table_data]
                         pred_df = pd.DataFrame(display_data)
+                        # Format column names to Title Case
+                        pred_df = format_column_names(pred_df)
                         
                         # Apply styling to the dataframe
                         def highlight_prediction(val):
@@ -428,6 +569,8 @@ def view_amr_prediction_result(job: AMRJob, db_manager: DatabaseManager) -> None
                 if isinstance(results, dict) and "predictions" in results and results["predictions"]:
                     predictions = results["predictions"]
                     pred_df = pd.DataFrame(predictions)
+                    # Format column names to Title Case
+                    pred_df = format_column_names(pred_df)
                     csv = pred_df.to_csv(index=False)
                     
                     st.download_button(

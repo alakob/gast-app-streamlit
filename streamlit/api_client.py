@@ -166,8 +166,20 @@ class AMRApiClient:
                         # Add any additional parameters as form fields
                         form_data = {}
                         if parameters:
+                            # Handle the model parameter specially to ensure it uses the right name
+                            if "model_id" in parameters and "model_name" not in parameters:
+                                # If only model_id is provided, map it to model_name for API compatibility
+                                form_data["model_name"] = str(parameters["model_id"])
+                                logger.info(f"Converting model_id to model_name: {parameters['model_id']}")
+                            elif "model_name" in parameters:
+                                # If model_name is directly provided, use it
+                                form_data["model_name"] = str(parameters["model_name"])
+                                logger.info(f"Using provided model_name: {parameters['model_name']}")
+                            
+                            # Add all other parameters
                             for key, value in parameters.items():
-                                form_data[key] = str(value)
+                                if key != "model_id":  # Skip model_id as we've handled it
+                                    form_data[key] = str(value)
                         
                         # Make a direct request using requests (not using _make_request which expects JSON)
                         # Remove Content-Type header as it will be set by requests for multipart/form-data
@@ -207,8 +219,14 @@ class AMRApiClient:
         
         # Include selected model in response if specified
         model_info = {}
-        if parameters and "model_id" in parameters:
-            model_info["model_id"] = parameters["model_id"]
+        if parameters:
+            if "model_name" in parameters:
+                model_info["model_name"] = parameters["model_name"]
+                logger.info(f"Mock mode using model_name: {parameters['model_name']}")
+            elif "model_id" in parameters:
+                # For backward compatibility, use model_id but rename to model_name
+                model_info["model_name"] = parameters["model_id"]
+                logger.info(f"Mock mode converting model_id to model_name: {parameters['model_id']}")
             
         # Store that this is actually a mock job in session state for internal tracking
         mock_jobs = st.session_state.get("_mock_job_ids", set())
@@ -240,12 +258,23 @@ class AMRApiClient:
         # Check if the API is available (either previously confirmed or not yet tried)
         using_real_api = st.session_state.get("using_real_amr_api", False)
         
-        # Check if this is a known mock job ID (tracked internally)
-        mock_job_ids = st.session_state.get("_mock_job_ids", set())
-        is_mock_job = job_id in mock_job_ids
+        # Force reset of mock tracking - using AMR-specific tracking
+        if "force_rerun" in st.session_state and st.session_state.force_rerun:
+            logger.info("Forced rerun detected - clearing AMR-specific mock tracking")
+            st.session_state["_amr_mock_job_ids"] = set()  # AMR-specific tracking
+            st.session_state.force_rerun = False
         
-        # For real jobs when API is available, try to use the real API
-        if not is_mock_job and using_real_api:
+        # Check if this is a known mock job ID (tracked internally)
+        # Use AMR-specific tracking to prevent interference with Bakta
+        amr_mock_job_ids = st.session_state.get("_amr_mock_job_ids", set())
+        is_mock_job = job_id in amr_mock_job_ids and not using_real_api
+        
+        logger.info(f"Checking status for job {job_id}: using_real_api={using_real_api}, is_mock_job={is_mock_job}")
+        
+        # ALWAYS try real API first regardless of mock job status
+        # This ensures we get the most up-to-date status from the database
+        try_real_api = True  # Try real API regardless of mock status
+        if try_real_api:
             try:
                 # Use direct request instead of _make_request to better handle the actual API responses
                 logger.info(f"Using real API to check status for job {job_id}")
@@ -266,28 +295,44 @@ class AMRApiClient:
                 
                 # Map API status values to our expected values (API uses Title case, we use UPPERCASE)
                 status_mapping = {
+                    # Title case from DB
                     "Submitted": "PENDING",
                     "Processing": "RUNNING",
                     "Running": "RUNNING",
                     "Completed": "SUCCESSFUL",
+                    "Complete": "SUCCESSFUL",  # Alternative spelling
                     "Failed": "FAILED",
-                    "Error": "ERROR"
+                    "Error": "ERROR",
+                    # Already uppercase (for idempotence)
+                    "PENDING": "PENDING",
+                    "RUNNING": "RUNNING",
+                    "SUCCESSFUL": "SUCCESSFUL",
+                    "COMPLETED": "SUCCESSFUL",
+                    "FAILED": "FAILED",
+                    "ERROR": "ERROR"
                 }
                 
+                # Get status from various possible locations in different case formats
                 api_status = result.get("status", "UNKNOWN")
-                mapped_status = status_mapping.get(api_status, api_status)
+                # Try both the original and uppercase version for more robust matching
+                mapped_status = status_mapping.get(api_status, status_mapping.get(api_status.upper(), api_status))
+                
+                # Log the status mapping for debugging
+                logger.info(f"API status '{api_status}' mapped to '{mapped_status}'")
                 
                 # Format the response consistently
                 formatted_result = {
                     "job_id": job_id,
                     "status": mapped_status,
                     "progress": result.get("progress", 0),
+                    "source": "database",  # Mark this as coming from the real database for tracking
                 }
                 
                 # Copy additional fields if present
-                for field in ["start_time", "end_time", "result_file", "error"]:
+                for field in ["start_time", "end_time", "result_file", "aggregated_result_file", "error"]:
                     if field in result:
                         formatted_result[field] = result[field]
+                        logger.info(f"Copied field from API response: {field} = {result[field]}")
                 
                 # Handle additional info specially to extract important fields
                 if "additional_info" in result and result["additional_info"]:
@@ -311,8 +356,11 @@ class AMRApiClient:
                     # For 404 errors, the job might not exist - fall back to mock
                     if status_code == 404:
                         logger.warning(f"Job {job_id} not found on server - might be a mock job")
-                        mock_job_ids.add(job_id)
-                        st.session_state["_mock_job_ids"] = mock_job_ids
+                        # Use AMR-specific tracking
+                        amr_mock_job_ids = st.session_state.get("_amr_mock_job_ids", set())
+                        amr_mock_job_ids.add(job_id)
+                        st.session_state["_amr_mock_job_ids"] = amr_mock_job_ids
+                        logger.info(f"Added job {job_id} to AMR mock tracking due to 404 error")
                     else:
                         # For other HTTP errors, return an error status but don't fall back to mock
                         try:
@@ -324,10 +372,13 @@ class AMRApiClient:
                 # For connection errors, fall back to mock mode
                 if isinstance(e, requests.ConnectionError):
                     logger.warning("Connection error - falling back to mock mode")
+                    # IMPORTANT: Only switch AMR API to mock mode, not Bakta
                     st.session_state["using_real_amr_api"] = False
-                    # Add to mock job IDs since we'll use mock from now on
-                    mock_job_ids.add(job_id)
-                    st.session_state["_mock_job_ids"] = mock_job_ids
+                    # Use AMR-specific tracking
+                    amr_mock_job_ids = st.session_state.get("_amr_mock_job_ids", set())
+                    amr_mock_job_ids.add(job_id)
+                    st.session_state["_amr_mock_job_ids"] = amr_mock_job_ids
+                    logger.info(f"Added job {job_id} to AMR mock tracking due to connection error")
         
         # For mock jobs or when API is unavailable, use our simulation
         import time
@@ -399,7 +450,7 @@ class AMRApiClient:
     
     def get_prediction_results(self, job_id: str) -> Dict:
         """
-        Get the results of a completed AMR prediction job.
+        Get the results for a completed AMR prediction job.
         
         Args:
             job_id: ID of the prediction job
@@ -414,72 +465,162 @@ class AMRApiClient:
         
         # Check if we're using the real API
         using_real_api = st.session_state.get("using_real_amr_api", False)
+        if not using_real_api:
+            logger.warning(f"Not using real API, cannot get results for job {job_id}")
+            return {"job_id": job_id, "error": "API not available", "status": "ERROR"}
         
-        # Check if this is a known mock job ID
-        mock_job_ids = st.session_state.get("_mock_job_ids", set())
-        is_mock_job = job_id in mock_job_ids
-        
-        # First check if job status indicates it's completed
+        # Directly get job information from the API endpoint
+        logger.info(f"Getting job information for {job_id} directly from API")
         try:
             status_info = self.get_prediction_status(job_id)
-            if status_info.get("status") != "SUCCESSFUL" and status_info.get("status") != "Completed":
+            # Check if job is completed
+            status = status_info.get("status", "").upper()
+            if status not in ["SUCCESSFUL", "COMPLETED", "COMPLETE"]:
                 logger.warning(f"Job {job_id} not completed yet, status: {status_info.get('status')}")
                 return {"job_id": job_id, "error": "Job not completed yet", "status": status_info.get("status")}
             
-            # If we have a result file path from the status, try to use that
+            # Get file paths from the job status response
             result_file = status_info.get("result_file")
+            aggregated_result_file = status_info.get("aggregated_result_file")
+            
+            logger.info(f"API response - result_file: {result_file}, aggregated_result_file: {aggregated_result_file}")
+            
+            # Map paths between containers to make files accessible in Streamlit container
+            def map_container_path(api_path):
+                if not api_path:
+                    return None
+                    
+                # Since both containers share the volume, we can just use the same path
+                # The path is already correct in the Docker context
+                if '/app/results/' in api_path:
+                    # For Docker container access, we use the same path
+                    # This assumes the files are accessed from within the Streamlit container
+                    # which also has the volume mounted at /app/results
+                    mapped_path = api_path
+                    logger.info(f"Using direct container path: {mapped_path}")
+                    return mapped_path
+                # Fallback for other paths
+                elif api_path.startswith('/app/'):
+                    path_without_app = api_path[5:]  # Remove /app/ prefix
+                    mapped_path = f"/app/{path_without_app}"
+                    logger.info(f"Mapped API path {api_path} to {mapped_path}")
+                    return mapped_path
+                else:
+                    return api_path
+            
+            # Map the file paths
+            local_result_file = map_container_path(result_file)
+            local_aggregated_file = map_container_path(aggregated_result_file)
+            
+            # Check if result file exists and load it
+            if not local_result_file or not os.path.exists(local_result_file):
+                logger.warning(f"Result file not found at {local_result_file}, cannot proceed")
+                return {"job_id": job_id, "error": "Result file not found", "status": "ERROR"}
+                
+            # Load the prediction results file
+            logger.info(f"Loading results from file: {local_result_file}")
+            prediction_results = self._load_results_from_file(local_result_file, job_id)
+            
+            # Add job information to results
+            prediction_results.update({
+                "job_id": job_id,
+                "status": status_info.get("status"),
+                "result_file_path": local_result_file
+            })
+            
+            # Add aggregated file path if it exists
+            if local_aggregated_file:
+                prediction_results["aggregated_result_file"] = local_aggregated_file
+                # Check if file actually exists and log it
+                if os.path.exists(local_aggregated_file):
+                    logger.info(f"Aggregated file exists at {local_aggregated_file}")
+                else:
+                    logger.warning(f"Aggregated file not found at {local_aggregated_file}")
+            
+            return prediction_results
             
         except Exception as e:
-            logger.error(f"Error checking job status: {str(e)}")
-            return {"job_id": job_id, "error": f"Error checking job status: {str(e)}", "status": "ERROR"}
+            logger.error(f"Error getting prediction results: {str(e)}")
+            return {"job_id": job_id, "error": f"Error: {str(e)}", "status": "ERROR"}
+    
+    def _load_results_from_file(self, file_path: str, job_id: str) -> Dict:
+        """
+        Load and parse prediction results from a local file.
         
-        # For real jobs when API is available, download results from API
-        if not is_mock_job and using_real_api:
-            try:
-                logger.info(f"Downloading results for job {job_id} from AMR API /jobs/{job_id}/downloads endpoint")
+        Args:
+            file_path: Path to the results file
+            job_id: ID of the prediction job
+        
+        Returns:
+            Dictionary containing parsed prediction results
+        """
+        import pandas as pd
+        import os
+        import csv
+        import json
+        
+        logger.info(f"Loading results from file: {file_path}")
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            error_msg = f"Results file not found: {file_path}"
+            logger.error(error_msg)
+            return {"job_id": job_id, "status": "ERROR", "error": error_msg}
+            
+        try:
+            # Read a sample to detect the format
+            with open(file_path, 'r') as f:
+                sample = f.read(1024)
                 
-                # Create results directory if it doesn't exist
-                results_dir = "/Users/alakob/projects/gast-app-streamlit/results"
-                os.makedirs(results_dir, exist_ok=True)
+            # Count delimiters to detect format
+            tab_count = sample.count('\t')
+            comma_count = sample.count(',')
+            logger.info(f"File sample (2 lines): {sample.splitlines()[:2]}")
+            # Fix the backslash in f-string issue by separating the tab character
+            tab_char = '\t'  # Define outside the f-string
+            logger.info(f"Format detection - tabs: {[line.count(tab_char) for line in sample.splitlines()[:2]]}, "
+                       f"commas: {[line.count(',') for line in sample.splitlines()[:2]]}")
+            logger.info(f"Total delimiters - tabs: {tab_count}, commas: {comma_count}")
+            
+            # Determine the appropriate delimiter
+            if file_path.endswith('.json'):
+                # JSON format
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                return self._process_api_results(data, job_id)
+            elif file_path.endswith('.tsv') or tab_count > comma_count:
+                # TSV format
+                logger.info(f"Using tab delimiter for file: {file_path}")
+                delimiter = '\t'
+            else:
+                # CSV format
+                logger.info(f"Using comma delimiter for file: {file_path} (as expected)")
+                delimiter = ','
                 
-                # Download the results from the API
-                download_response = self._make_request("GET", f"/jobs/{job_id}/downloads")
-                logger.info(f"Successfully retrieved download data for job {job_id}")
-                
-                # Save the downloaded results to a file
-                result_file_path = os.path.join(results_dir, f"amr_predictions_{job_id}.json")
-                with open(result_file_path, 'w') as f:
-                    json.dump(download_response, f, indent=2)
-                
-                logger.info(f"Saved results to {result_file_path}")
-                
-                # Process and format the results for display
-                results = self._process_api_results(download_response, job_id)
-                
-                # Add file path to results for future reference
-                results["result_file_path"] = result_file_path
-                
-                return results
-                
-            except requests.RequestException as e:
-                logger.warning(f"Error downloading prediction results: {str(e)}")
-                # Try to read from file if available
-                if result_file and os.path.exists(result_file):
-                    logger.info(f"Falling back to local file: {result_file}")
-                    try:
-                        return self._load_results_from_file(result_file, job_id)
-                    except Exception as file_error:
-                        logger.error(f"Error reading from local file: {str(file_error)}")
-                
-                # If API connection failed, mark that we're using mock mode
-                st.session_state["using_real_amr_api"] = False
-                # Add to mock job IDs since we'll use mock from now on
-                mock_job_ids.add(job_id)
-                st.session_state["_mock_job_ids"] = mock_job_ids
-                
-                # Return error if we couldn't get results
-                if not isinstance(e, requests.ConnectionError):
-                    return {"job_id": job_id, "status": "ERROR", "error": str(e)}
+            # Parse with pandas
+            logger.info(f"Attempting to read with pandas using delimiter: '{delimiter}'")
+            df = pd.read_csv(file_path, sep=delimiter)
+            logger.info(f"Successfully parsed with pandas: {len(df)} rows, columns: {', '.join(df.columns)}")
+            
+            # Convert data to structured format
+            records = df.to_dict(orient="records")
+            logger.info(f"Converted {len(records)} rows to dictionary records")
+            
+            # Build results dictionary
+            results = {
+                "job_id": job_id,
+                "status": "SUCCESSFUL",
+                "predictions": records,
+                "result_file_path": file_path
+            }
+            
+            logger.info(f"Returning {len(records)} predictions with detected delimiter: '{delimiter}'")
+            return results
+            
+        except Exception as e:
+            error_msg = f"Error parsing results file: {str(e)}"
+            logger.error(error_msg)
+            return {"job_id": job_id, "status": "ERROR", "error": error_msg}
         
         # If local file exists from status info, try to load it
         if result_file and os.path.exists(result_file):
@@ -489,16 +630,21 @@ class AMRApiClient:
             except Exception as file_error:
                 logger.error(f"Error reading from local file: {str(file_error)}")
         
-        # Generate mock prediction results if all else fails
-        logger.warning(f"Generating mock results for job {job_id}")
-        return self._generate_mock_results(job_id)
+        # FIXED: Don't fall back to mock data, show a clear error message instead
+        logger.warning(f"REAL API MODE: Not generating mock results for {job_id}")
+        return {
+            "job_id": job_id, 
+            "status": "ERROR", 
+            "error": "Could not retrieve results from API. Mock mode disabled.",
+            "source": "real_api_only" 
+        }
 
     def _process_api_results(self, data: Dict, job_id: str) -> Dict:
         """
         Process and format API results for display.
         
         Args:
-            data: Raw API response data
+            data: Raw API response data (dictionary format)
             job_id: Job ID for the results
             
         Returns:
@@ -568,27 +714,77 @@ class AMRApiClient:
                 return self._process_api_results(file_data, job_id)
         
         elif file_path.endswith('.tsv') or file_path.endswith('.csv'):
-            # TSV/CSV file - auto-detect the delimiter
+            # TSV/CSV file - auto-detect the delimiter with enhanced detection and logging
             predictions = []
+            file_ext = os.path.splitext(file_path)[1]
             
-            # First check the actual content to determine the delimiter
+            # First check the actual content to determine the delimiter with better analysis
             with open(file_path, 'r') as f:
-                first_line = f.readline().strip()
-                # Check if it's actually comma-delimited even if it has a .tsv extension
-                if ',' in first_line and ('\t' not in first_line or first_line.count(',') > first_line.count('\t')):
+                # Read multiple lines for better detection
+                sample_lines = []
+                for i in range(5):  # Read first 5 lines for better detection
+                    line = f.readline().strip()
+                    if not line:
+                        break
+                    sample_lines.append(line)
+                
+                # Log sample for debugging
+                logger.info(f"File sample ({len(sample_lines)} lines): {sample_lines[0][:50]}...")
+                
+                # Analyze all sample lines for delimiter counts
+                tab_counts = [line.count('\t') for line in sample_lines]
+                comma_counts = [line.count(',') for line in sample_lines]
+                total_tabs = sum(tab_counts)
+                total_commas = sum(comma_counts)
+                
+                # Log detection statistics
+                logger.info(f"Format detection - tabs: {tab_counts}, commas: {comma_counts}")
+                logger.info(f"Total delimiters - tabs: {total_tabs}, commas: {total_commas}")
+                
+                # Check for .tsv files with actual CSV content (format mismatch)
+                if file_ext.lower() == '.tsv' and total_commas > total_tabs:
                     delimiter = ','
-                    logger.info(f"Detected comma-delimited content in file: {file_path}")
+                    logger.warning(f"FORMAT MISMATCH: File has .tsv extension but appears to have CSV format content (comma-delimited)")
+                elif file_ext.lower() == '.csv' and total_tabs > total_commas:
+                    delimiter = '\t'
+                    logger.warning(f"FORMAT MISMATCH: File has .csv extension but appears to have TSV format content (tab-delimited)")
+                # Normal case - extensions match content
+                elif total_commas > total_tabs:
+                    delimiter = ','
+                    logger.info(f"Using comma delimiter for file: {file_path} (as expected)")
                 else:
                     delimiter = '\t'
-                    logger.info(f"Using tab delimiter for file: {file_path}")
+                    logger.info(f"Using tab delimiter for file: {file_path} (as expected)")
             
             # Now read the file with the correct delimiter
-            with open(file_path, 'r') as f:
-                reader = csv.DictReader(f, delimiter=delimiter)
-                for row in reader:
-                    predictions.append(row)
+            try:
+                # First try with pandas for more robust parsing
+                import pandas as pd
+                logger.info(f"Attempting to read with pandas using delimiter: '{delimiter}'")
+                df = pd.read_csv(file_path, sep=delimiter)
+                column_names = df.columns.tolist()
+                logger.info(f"Successfully parsed with pandas: {len(df)} rows, columns: {', '.join(column_names)}")
+                
+                # Convert DataFrame to list of dicts
+                predictions = df.to_dict(orient='records')
+                logger.info(f"Converted {len(predictions)} rows to dictionary records")
+            except Exception as pd_error:
+                logger.warning(f"Pandas parsing failed: {str(pd_error)}. Falling back to csv module.")
+                # Fall back to csv module
+                with open(file_path, 'r') as f:
+                    reader = csv.DictReader(f, delimiter=delimiter)
+                    for row in reader:
+                        predictions.append(row)
+                logger.info(f"Parsed {len(predictions)} rows with csv.DictReader using delimiter: '{delimiter}'")
             
+            # Add delimiter info to results for debugging
             results["predictions"] = predictions
+            results["format_info"] = {
+                "file_extension": os.path.splitext(file_path)[1],
+                "detected_delimiter": delimiter,
+                "prediction_count": len(predictions)
+            }
+            logger.info(f"Returning {len(predictions)} predictions with detected delimiter: '{delimiter}'")
             return results
         
         else:
@@ -734,19 +930,33 @@ class AMRApiClient:
     
     def _generate_mock_results(self, job_id: str) -> Dict:
         """
-        Generate mock prediction results for demonstration.
+        DISABLED: Mock data generation is disabled to focus on real API data.
         
         Args:
             job_id: Job ID
             
         Returns:
-            Mock results dictionary
+            Error dictionary indicating mock data is disabled
         """
-        import random
-        from datetime import datetime
+        # MOCK DATA GENERATION DISABLED
+        logger.warning(f"Mock data generation DISABLED for job {job_id} - forcing real API mode only")
         
-        # Generate high-quality AMR genes for demo that will display well in a table
-        amr_genes = [
+        # Return an error message instead of mock data
+        return {
+            "job_id": job_id,
+            "status": "ERROR",
+            "error": "Mock data generation is disabled. Using real API only.",
+            "source": "real_api_only",
+            "mock_disabled": True
+        }
+        
+        # The code below is disabled and will never run
+        if False:  # This condition ensures the code below never executes
+            import random
+            from datetime import datetime
+        
+            # Generate high-quality AMR genes for demo that will display well in a table
+            amr_genes = [
             {"gene": "blaTEM-1", "class": "beta-lactamase", "coverage": 98.76, "identity": 99.21, "resistance": ["ampicillin", "penicillin"]},
             {"gene": "tet(A)", "class": "tetracycline efflux", "coverage": 95.46, "identity": 99.93, "resistance": ["tetracycline"]},
             {"gene": "sul1", "class": "sulfonamide resistance", "coverage": 97.82, "identity": 100.00, "resistance": ["sulfamethoxazole"]},
@@ -809,6 +1019,72 @@ class AMRApiClient:
         
         logger.info(f"Generated mock results for job {job_id}")
         return mock_result
+
+    def get_jobs(self, status: Optional[str] = None) -> List[Dict]:
+        """
+        Get all AMR prediction jobs, optionally filtered by status.
+        
+        Args:
+            status: Optional status filter (e.g., "Completed", "Running", "Failed")
+            
+        Returns:
+            List of job dictionaries containing job information
+        """
+        import streamlit as st
+        
+        # Check if real API is available
+        using_real_api = st.session_state.get("using_real_amr_api", False)
+        
+        if using_real_api:
+            try:
+                # Build endpoint with optional status parameter
+                endpoint = "jobs"
+                params = {}
+                if status:
+                    params["status"] = status
+                
+                logger.info(f"Fetching jobs with params: {params}")
+                
+                # Make API request
+                response = self._make_request("GET", endpoint, params=params)
+                
+                # If response is a list, return it directly
+                if isinstance(response, list):
+                    logger.info(f"Retrieved {len(response)} jobs from API")
+                    return response
+                # If response is a dict with a data field containing the jobs list
+                elif isinstance(response, dict) and "data" in response and isinstance(response["data"], list):
+                    logger.info(f"Retrieved {len(response['data'])} jobs from API")
+                    return response["data"]
+                # Otherwise, log error and return empty list
+                else:
+                    logger.error(f"Unexpected response format from get_jobs: {type(response)}")
+                    return []
+            except Exception as e:
+                logger.error(f"Error fetching jobs from API: {str(e)}")
+                return []
+        else:
+            # Return mock data in development mode
+            logger.warning("Using mock data for jobs - real API not available")
+            
+            # Create some mock job data for development
+            mock_jobs = [
+                {
+                    "id": "mock-job-1",
+                    "status": "Completed",
+                    "progress": 100,
+                    "start_time": datetime.now().isoformat(),
+                    "end_time": (datetime.now() + timedelta(minutes=2)).isoformat(),
+                    "result_file": "/app/results/mock_job_1.csv",
+                    "aggregated_result_file": "/app/results/mock_job_1_aggregated.csv"
+                }
+            ]
+            
+            # Filter by status if provided
+            if status:
+                mock_jobs = [job for job in mock_jobs if job["status"] == status]
+                
+            return mock_jobs
 
 
 class BaktaApiWrapper:
@@ -981,35 +1257,76 @@ class BaktaApiWrapper:
 def create_amr_client() -> AMRApiClient:
     """Create an AMR API client with configuration from environment."""
     try:
+        # First, create the client with the configured URL
         client = AMRApiClient(
             base_url=config.AMR_API_URL,
             api_key=config.AMR_API_KEY
         )
+        
         # Test connection to ensure API is properly working
         try:
             import requests
             import streamlit as st
             
-            # Try to access a specific API endpoint for better validation
-            # Most APIs have a health or status endpoint
-            endpoints = ["/", "/health", "/status", "/api"]
+            # Check if API URL is properly set
+            if not config.AMR_API_URL or config.AMR_API_URL == "":
+                logger.warning("AMR API URL is empty or not set, using mock mode")
+                st.session_state["using_real_amr_api"] = False
+                return client
+                
+            # First try the health endpoint with higher timeout to ensure a proper check
+            try:
+                # Try the health endpoint specifically (most reliable)
+                health_endpoint = "/health"
+                logger.info(f"Trying AMR API health endpoint at {config.AMR_API_URL}{health_endpoint}")
+                health_response = requests.get(f"{config.AMR_API_URL}{health_endpoint}", timeout=5)
+                
+                if health_response.ok:
+                    logger.info(f"AMR API health check passed with status {health_response.status_code}")
+                    st.session_state["using_real_amr_api"] = True
+                    # Force service into real mode
+                    st.session_state["mock_override"] = False
+                    return client
+            except requests.RequestException as e:
+                logger.warning(f"Health endpoint check failed: {str(e)}, trying other endpoints")
+            
+            # Fall back to checking other common endpoints
+            endpoints = ["/", "/docs", "/openapi.json", "/jobs", "/api"]
             
             for endpoint in endpoints:
                 try:
-                    response = requests.get(f"{config.AMR_API_URL}{endpoint}", timeout=2)
+                    logger.info(f"Trying AMR API endpoint: {config.AMR_API_URL}{endpoint}")
+                    response = requests.get(f"{config.AMR_API_URL}{endpoint}", timeout=3)
+                    
                     if response.ok:
-                        logger.info(f"AMR API server is running and healthy, endpoint: {endpoint}")
+                        logger.info(f"AMR API server is running and healthy at {endpoint}, status: {response.status_code}")
                         # Store a flag in session state to indicate we're using real API
                         st.session_state["using_real_amr_api"] = True
+                        # Force real mode
+                        st.session_state["mock_override"] = False
                         return client
-                except requests.RequestException:
+                except requests.RequestException as e:
+                    logger.warning(f"Endpoint {endpoint} check failed: {str(e)}")
                     continue
             
-            # If we get here, none of the endpoints worked but server responded
-            # Try a generic connection test as fallback
-            response = requests.get(f"{config.AMR_API_URL}", timeout=2)
-            logger.info(f"AMR API server is responding with status code: {response.status_code}")
-            st.session_state["using_real_amr_api"] = True
+            # Last resort: try base URL with increased timeout
+            try:
+                logger.info(f"Attempting final connection check to base URL: {config.AMR_API_URL}")
+                response = requests.get(config.AMR_API_URL, timeout=5)
+                logger.info(f"AMR API server responded with status code: {response.status_code}")
+                
+                # Accept any response that's not an error
+                if response.status_code < 500:  # Allow even 4xx responses as API might be there but endpoint not found
+                    st.session_state["using_real_amr_api"] = True
+                    # Force real mode
+                    st.session_state["mock_override"] = False
+                    return client
+            except requests.RequestException as e:
+                logger.error(f"Base URL connection failed: {str(e)}")
+                
+            # If we get here, all connection attempts failed
+            logger.warning("All API connection attempts failed, using mock mode")
+            st.session_state["using_real_amr_api"] = False
             return client
             
         except (requests.ConnectionError, requests.Timeout) as e:

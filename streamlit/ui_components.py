@@ -7,6 +7,9 @@ import json
 import os
 from typing import Dict, Any, List, Optional, Callable, Tuple
 
+# Import column formatting utility
+from utils import format_column_names
+
 def create_sidebar() -> None:
     """Create the application sidebar with configuration options."""
     import config
@@ -23,7 +26,13 @@ def create_sidebar() -> None:
     st.sidebar.title("Model Settings")
     
     # Model selection
-    model_options = ["DraGNOME-2.5b-v1", "DraPLASMID-2.5b-v1"]
+    model_options = [
+        "DraGNOME-50m-v1",
+        "DraGNOME-2.5b-v1",  # should be default model
+        "DraPLASMID-2.5b-v1",
+        "DraGNOME-500m-v1",  # New models
+       "DraGNOME-50m-v2"
+    ]
     selected_model = st.sidebar.selectbox(
         "Select Model", 
         model_options, 
@@ -31,13 +40,20 @@ def create_sidebar() -> None:
         help="Select the AMR prediction model to use"
     )
     
-    # Store the full model ID in session state (for API calls)
+    # Store the full model name in session state (for API calls)
+    # Changed from model_id to model_name to match the API's expected parameter name
+    st.session_state.amr_params["model_name"] = f"alakob/{selected_model}"
+    
+    # For backwards compatibility, also store as model_id
     st.session_state.amr_params["model_id"] = f"alakob/{selected_model}"
     
     # Model description
     model_descriptions = {
         "DraGNOME-2.5b-v1": "Specialized model for bacterial genome analysis and AMR prediction",
-        "DraPLASMID-2.5b-v1": "Specialized model for plasmid analysis and AMR prediction"
+        "DraPLASMID-2.5b-v1": "Specialized model for plasmid analysis and AMR prediction",
+        "DraGNOME-500m-v1": "Medium-sized model (500M parameters) for bacterial genome analysis",
+        "DraGNOME-50m-v1": "Lightweight model (50M parameters, version 1) for rapid genome analysis",
+        "DraGNOME-50m-v2": "Improved lightweight model (50M parameters, version 2) with enhanced accuracy"
     }
     
     st.sidebar.markdown(f"**Description**: {model_descriptions.get(selected_model, '')}")
@@ -759,6 +775,8 @@ def create_results_tab() -> None:
                                     predictions = results["predictions"]
                                     if isinstance(predictions, list) and predictions:
                                         df = pd.DataFrame(predictions)
+                                        # Format column names to Title Case
+                                        df = format_column_names(df)
                                         st.dataframe(df)
                                     else:
                                         st.warning("No prediction data available")
@@ -918,20 +936,20 @@ def create_results_tab() -> None:
     with history_tab:
         st.subheader("Results History")
         
-        # Import the database manager and results view components
+        # Import the database manager and results_history components
         try:
             from amr_predictor.bakta.database import DatabaseManager
             
             # Try different import approaches to handle various run configurations
             try:
                 # First try direct import (when app.py adds the path correctly)
-                import results_view
-                display_results_table = results_view.display_results_table
+                import results_history
+                display_consolidated_history = results_history.display_consolidated_history
             except ImportError:
                 try:
                     # Try relative import (when running as a module)
-                    from . import results_view
-                    display_results_table = results_view.display_results_table
+                    from . import results_history
+                    display_consolidated_history = results_history.display_consolidated_history
                 except ImportError:
                     # Try absolute import with streamlit prefix
                     import sys
@@ -940,18 +958,18 @@ def create_results_tab() -> None:
                     streamlit_dir = os.path.dirname(os.path.abspath(__file__))
                     if streamlit_dir not in sys.path:
                         sys.path.insert(0, streamlit_dir)
-                    import results_view
-                    display_results_table = results_view.display_results_table
+                    import results_history
+                    display_consolidated_history = results_history.display_consolidated_history
             
             # Initialize database manager with the project path
             db_manager = DatabaseManager()
             
-            # Display the results table
-            display_results_table(db_manager)
+            # Display the consolidated history with all completed jobs
+            display_consolidated_history(db_manager)
             
         except Exception as e:
-            st.error(f"Could not load the results view components: {str(e)}")
-            st.info("Make sure the AMR predictor package is properly installed and the results_view.py file exists.")
+            st.error(f"Could not load the results history components: {str(e)}")
+            st.info("Make sure the AMR predictor package is properly installed and the results_history.py file exists.")
 
 def create_job_management_tab() -> None:
     """Create the Job Management tab content."""
@@ -978,6 +996,8 @@ def create_job_management_tab() -> None:
     
     if jobs_data:
         df = pd.DataFrame(jobs_data)
+        # Format column names to Title Case
+        df = format_column_names(df)
         st.dataframe(df, hide_index=True)
         
         # Job selection and actions

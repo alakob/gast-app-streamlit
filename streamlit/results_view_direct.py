@@ -9,7 +9,12 @@ import os
 import json
 import pandas as pd
 import streamlit as st
+import logging
+from datetime import datetime
 from typing import Dict, Any, List, Optional
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
     """
@@ -71,8 +76,6 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
             import logging
             logging.error(f"Error fetching sequence data: {str(e)}")
     
-    st.header(f"AMR Prediction Results")
-    
     # Display timestamp if available (only timestamp since job ID is already shown above)
     if isinstance(results, dict) and "timestamp" in results:
         st.metric("Timestamp", results["timestamp"])
@@ -122,7 +125,7 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
             predictions = pred_list
             has_predictions = True
     
-    # Display predictions
+    # Display predictions section
     if has_predictions and predictions:
         st.subheader("Antimicrobial Resistance Predictions")
         
@@ -160,22 +163,86 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
             # Display the results table
             st.dataframe(styled_df, use_container_width=True)
             
-            # Show sequence analysis section
-            st.subheader("Sequence Analysis")
+            # Show sequence-level aggregated results (separate from general sequence analysis)
             
-            # Check for aggregated results file
-            aggregated_df = None
-            if isinstance(results, dict) and "aggregated_result_file" in results and results["aggregated_result_file"] and os.path.exists(results["aggregated_result_file"]):
+            # Get file paths without displaying debug information
+            result_file_path = None
+            if isinstance(results, dict) and "result_file_path" in results:
+                result_file_path = results["result_file_path"]
+            
+            # Check for aggregated results file path
+            aggregated_file_path = None
+            for field_name in ["aggregated_result_file", "aggregated_file_path", "aggregated_file"]:
+                if isinstance(results, dict) and field_name in results and results[field_name]:
+                    aggregated_file_path = results[field_name]
+                    break
+                
+            if aggregated_file_path:
                 try:
-                    aggregated_file = results["aggregated_result_file"]
-                    st.info(f"Loading sequence-level aggregated results from: {os.path.basename(aggregated_file)}")
+                    # Handle path mapping across containers
+                    aggregated_file = aggregated_file_path
                     
-                    # Load aggregated TSV file into DataFrame
-                    aggregated_df = pd.read_csv(aggregated_file, sep="\t")
+                    # Try additional path mappings if the file doesn't exist
+                    if not os.path.exists(aggregated_file):
+                        st.warning(f"Original file path not accessible: {aggregated_file}")
+                        
+                        # Try alternative path mappings
+                        possible_paths = [
+                            # Original path
+                            aggregated_file,
+                            # Path with /app prefix in Streamlit container
+                            os.path.join('/app', os.path.basename(aggregated_file)),
+                            # Path with results subdirectory in Streamlit container
+                            os.path.join('/app/results', os.path.basename(aggregated_file)),
+                            # Local path mapping outside container
+                            os.path.join('/Users/alakob/projects/gast-app-streamlit/results', os.path.basename(aggregated_file))
+                        ]
+                        
+                        # Check each possible path
+                        for path in possible_paths:
+                            if os.path.exists(path):
+                                aggregated_file = path
+                                st.success(f"Found file at alternative path: {path}")
+                                break
+                    
+                    # Explicitly check if file exists before trying to read it
+                    if not os.path.exists(aggregated_file):
+                        st.error(f"Could not find aggregated file")
+                        raise FileNotFoundError(f"Aggregated file not found: {aggregated_file}")
+                    
+                    # Get file stats silently for logging purposes
+                    file_stat = os.stat(aggregated_file)
+                    logger.info(f"Loading aggregated file: {os.path.basename(aggregated_file)}, Size: {file_stat.st_size} bytes")
+                    
+                    # Auto-detect delimiter based on file extension and content
+                    if aggregated_file.endswith('.csv'):
+                        # CSV file (comma-delimited)
+                        aggregated_df = pd.read_csv(aggregated_file, sep=",")
+                        logger.info(f"Loaded CSV file with comma delimiter")
+                    elif aggregated_file.endswith('.tsv'):
+                        # TSV file (tab-delimited)
+                        aggregated_df = pd.read_csv(aggregated_file, sep="\t")
+                        logger.info(f"Loaded TSV file with tab delimiter")
+                    else:
+                        # Try to detect delimiter by reading first few lines
+                        with open(aggregated_file, 'r') as f:
+                            sample = f.read(1024)  # Read a sample of the file
+                            tab_count = sample.count('\t')
+                            comma_count = sample.count(',')
+                            logger.info(f"File sample: {sample[:100]}...")
+                            logger.info(f"Delimiter counts - tabs: {tab_count}, commas: {comma_count}")
+                        
+                        # Use the most frequent delimiter
+                        if comma_count > tab_count:
+                            aggregated_df = pd.read_csv(aggregated_file, sep=",")
+                            logger.info("Auto-detected comma delimiter based on content")
+                        else:
+                            aggregated_df = pd.read_csv(aggregated_file, sep="\t")
+                            logger.info("Auto-detected tab delimiter based on content")
                     
                     if not aggregated_df.empty:
                         # Display the aggregated results as a table
-                        st.write("Sequence-Level Aggregated Results:")
+                        st.subheader("Sequence-Level Aggregated Results")
                         
                         # Apply styling similar to the main prediction table
                         styled_df = aggregated_df.style
@@ -193,79 +260,104 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
                         
                         st.dataframe(styled_df, use_container_width=True)
                     else:
-                        st.warning("No aggregated sequence data available")
+                        st.warning("Aggregated data file was found but contains no data")
                 except Exception as e:
                     st.error(f"Error loading aggregated results file: {str(e)}")
             else:
-                st.warning("No sequence analysis information available from the AMR API")
-            
-            # Extract sequence information from the results
-            sequence_info = {}
-            
-            # Look for sequence data in results dict (direct or nested)
-            if isinstance(results, dict):
-                # Try main level first
-                for key in ["sequence_id", "sequence_name", "sequence_length", "gc_content", "contig_count", "gene_count"]:
-                    if key in results:
-                        sequence_info[key] = results[key]
+                st.warning("No aggregated results file available for this job")
                 
-                # Look in a 'sequence' object if present
-                if "sequence" in results and isinstance(results["sequence"], dict):
-                    for key, value in results["sequence"].items():
-                        if key not in sequence_info:
-                            sequence_info[key] = value
+            # The Sequence Analysis section has been removed
                 
-                # If we have start/end positions for the predictions, use those too
-                if len(df) > 0 and "start" in df.columns and "end" in df.columns:
-                    sequence_info["analyzed_region"] = f"{df['start'].iloc[0]}-{df['end'].iloc[0]}"
-                    if "length" in df.columns:
-                        sequence_info["region_length"] = df["length"].iloc[0]
-            
-            # Display sequence information
-            if sequence_info:
-                # Determine how many columns to display (max 3 per row)
-                total_items = len(sequence_info)
-                rows_needed = (total_items + 2) // 3  # Ceiling division by 3
-                
-                for row in range(rows_needed):
-                    # Create 3 columns per row
-                    cols = st.columns(3)
-                    # Get the slice of items for this row
-                    start_idx = row * 3
-                    end_idx = min(start_idx + 3, total_items)
-                    
-                    # Get the items for this row
-                    row_items = list(sequence_info.items())[start_idx:end_idx]
-                    
-                    # Display metrics in this row's columns
-                    for i, (key, value) in enumerate(row_items):
-                        display_key = key.replace("_", " ").title()
-                        cols[i].metric(display_key, value)
-            else:
-                st.info("No sequence information available from the AMR API")
-                
-            # Show summary statistics
+            # Show summary statistics from the aggregated file
             st.subheader("Summary")
-            total_drugs = len(df)
             
-            # Count resistant predictions
-            resistant_count = 0
-            if "prediction" in df.columns:
-                resistant_values = ["RESISTANT", "R"]
-                resistant_count = df["prediction"].apply(
-                    lambda x: str(x).upper() in resistant_values
-                ).sum()
+            # Track if we have aggregated data
+            has_aggregated_data = False
+            aggregated_df = None
+            
+            # Try to load the aggregated file if available
+            if isinstance(results, dict):
+                for field_name in ["aggregated_result_file", "aggregated_file_path", "aggregated_file"]:
+                    if field_name in results and results[field_name]:
+                        agg_file_path = results[field_name]
+                        logger.info(f"Found aggregated file path: {agg_file_path}")
+                        
+                        # Use the Docker container path directly (following the correct pattern for Docker volumes)
+                        if os.path.exists(agg_file_path):
+                            try:
+                                # Auto-detect delimiter based on file extension
+                                if agg_file_path.endswith('.csv'):
+                                    aggregated_df = pd.read_csv(agg_file_path, sep=",")
+                                elif agg_file_path.endswith('.tsv'):
+                                    aggregated_df = pd.read_csv(agg_file_path, sep="\t")
+                                else:
+                                    # Try comma first as default
+                                    aggregated_df = pd.read_csv(agg_file_path, sep=",")
+                                
+                                has_aggregated_data = True
+                                logger.info(f"Successfully loaded aggregated file for summary: {agg_file_path}")
+                                break
+                            except Exception as e:
+                                logger.error(f"Error loading aggregated file for summary: {str(e)}")
+                        else:
+                            logger.warning(f"Aggregated file not found at: {agg_file_path}")
+            
+            # Set default metrics
+            total_sequences = 0
+            resistant_sequences = 0
+            resistance_percentage = 0
+            
+            # Calculate metrics from aggregated data if available
+            if has_aggregated_data and aggregated_df is not None and not aggregated_df.empty:
+                # Count total unique sequence IDs
+                if 'sequence_id' in aggregated_df.columns:
+                    total_sequences = aggregated_df['sequence_id'].nunique()
+                else:
+                    # Fallback to just counting rows
+                    total_sequences = len(aggregated_df)
+                
+                # Count resistant sequences based on any_resistance or similar column
+                resistant_values = ["RESISTANT", "R", "Resistant"]
+                resistance_col = None
+                
+                # Try different possible column names for resistance classification
+                for col_name in ['any_resistance', 'majority_vote', 'avg_classification']:
+                    if col_name in aggregated_df.columns:
+                        resistance_col = col_name
+                        break
+                
+                if resistance_col:
+                    resistant_sequences = aggregated_df[resistance_col].apply(
+                        lambda x: str(x).upper() in [r.upper() for r in resistant_values]
+                    ).sum()
+                    
+                    # Calculate resistance percentage
+                    if total_sequences > 0:
+                        resistance_percentage = round(resistant_sequences / total_sequences * 100, 1)
+            else:
+                # Fallback to prediction data if no aggregated data
+                total_sequences = 1  # Assume one sequence when no aggregated data
+                
+                # Count resistant predictions as before
+                resistant_count = 0
+                if "prediction" in df.columns:
+                    resistant_values = ["RESISTANT", "R"]
+                    resistant_count = df["prediction"].apply(
+                        lambda x: str(x).upper() in resistant_values
+                    ).sum()
+                    
+                    # If any antibiotic shows resistance, mark the sequence as resistant
+                    resistant_sequences = 1 if resistant_count > 0 else 0
+                    resistance_percentage = 100 if resistant_sequences > 0 else 0
             
             # Display metrics
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Total Antibiotics", total_drugs)
+                st.metric("Total Sequence/Genome", total_sequences)
             with col2:
-                st.metric("Resistant", resistant_count)
+                st.metric("Resistant", resistant_sequences)
             with col3:
-                if total_drugs > 0:
-                    percentage = round(resistant_count / total_drugs * 100, 1)
-                    st.metric("Resistance %", f"{percentage}%")
+                st.metric("Resistance %", f"{resistance_percentage}%")
         else:
             st.warning("Prediction data format not recognized")
     else:
@@ -273,48 +365,105 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
     
     # Download buttons section in an expandable accordion
     with st.expander("Downloads", expanded=False):
-        # Add download options
-        col1, col2 = st.columns(2)
+        st.markdown("### Download Results Files")
+        
+        # Store file contents for downloads
+        prediction_file_content = None
+        aggregated_file_content = None
+        
+        # Get the prediction file path from results
+        prediction_file_path = None
+        
+        # Debug log the available keys in results to help diagnose issues
+        if isinstance(results, dict):
+            logger.info(f"Available keys in results: {', '.join(results.keys())}")
+        
+        # Check for prediction file under various possible key names
+        if isinstance(results, dict):
+            for field_name in ["result_file", "result_file_path", "file_path"]:
+                if field_name in results and results[field_name]:
+                    prediction_file_path = results[field_name]
+                    logger.info(f"Found prediction file path using key '{field_name}': {prediction_file_path}")
+                    break
+        
+        # Check if prediction file exists and read its content
+        if prediction_file_path:
+            logger.info(f"Checking for prediction file at path: {prediction_file_path}")
+            
+            # First check if the file exists
+            if os.path.exists(prediction_file_path):
+                try:
+                    with open(prediction_file_path, 'r') as f:
+                        prediction_file_content = f.read()
+                    logger.info(f"Successfully read prediction file: {prediction_file_path}")
+                except Exception as e:
+                    logger.error(f"Error reading prediction file: {str(e)}")
+            else:
+                logger.warning(f"Prediction file not found at path: {prediction_file_path}")
+                
+                # Try creating the content from the in-memory data if file doesn't exist
+                if has_predictions and isinstance(predictions, list):
+                    try:
+                        df = pd.DataFrame(predictions)
+                        prediction_file_content = df.to_csv(index=False)
+                        logger.info("Generated prediction file content from in-memory data")
+                    except Exception as e:
+                        logger.error(f"Failed to generate prediction content from in-memory data: {str(e)}")
+        
+        # Get aggregated file path
+        aggregated_file_path = None
+        if isinstance(results, dict):
+            for field_name in ["aggregated_result_file", "aggregated_file_path", "aggregated_file"]:
+                if field_name in results and results[field_name]:
+                    aggregated_file_path = results[field_name]
+                    break
+        
+        # Check if aggregated file exists and read its content
+        if aggregated_file_path and os.path.exists(aggregated_file_path):
+            try:
+                with open(aggregated_file_path, 'r') as f:
+                    aggregated_file_content = f.read()
+                logger.info(f"Successfully read aggregated file: {aggregated_file_path}")
+            except Exception as e:
+                logger.error(f"Error reading aggregated file: {str(e)}")
+        
+        # Create downloads section
+        col1, col2, col3 = st.columns(3)
+        
+        # Full JSON results
         with col1:
             download_json = st.download_button(
-                "Download JSON",
+                "Download Full Results (JSON)",
                 data=json.dumps(results, indent=2),
                 file_name=f"amr_results_{job_id}.json",
-                mime="application/json"
+                mime="application/json",
+                help="Download complete results data in JSON format"
             )
         
+        # Prediction file download
         with col2:
-            # Try to convert to CSV
-            try:
-                if has_predictions and isinstance(predictions, list):
-                    df = pd.DataFrame(predictions)
-                    csv_data = df.to_csv(index=False)
-                    
-                    download_csv = st.download_button(
-                        "Download CSV",
-                        data=csv_data,
-                        file_name=f"amr_results_{job_id}.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    # Create a flattened version of the results for CSV
-                    flat_data = []
-                    if isinstance(results, dict):
-                        for k, v in results.items():
-                            if not isinstance(v, (dict, list)):
-                                flat_data.append({"key": k, "value": v})
-                    
-                    if flat_data:
-                        df = pd.DataFrame(flat_data)
-                        csv_data = df.to_csv(index=False)
-                        
-                        download_csv = st.download_button(
-                            "Download CSV",
-                            data=csv_data,
-                            file_name=f"amr_results_{job_id}.csv",
-                            mime="text/csv"
-                        )
-                    else:
-                        st.warning("Cannot create CSV from this result format")
-            except Exception as e:
-                st.error(f"Error creating CSV: {str(e)}")
+            if prediction_file_content:
+                file_ext = os.path.splitext(prediction_file_path)[1] or ".csv"
+                download_csv = st.download_button(
+                    "Download Prediction Results",
+                    data=prediction_file_content,
+                    file_name=f"amr_predictions_{job_id}{file_ext}",
+                    mime="text/csv",
+                    help="Download the prediction results file"
+                )
+            else:
+                st.info("Prediction file unavailable for download")
+        
+        # Aggregated file download
+        with col3:
+            if aggregated_file_content:
+                file_ext = os.path.splitext(aggregated_file_path)[1] or ".csv"
+                download_agg = st.download_button(
+                    "Download Aggregated Results",
+                    data=aggregated_file_content,
+                    file_name=f"amr_aggregated_{job_id}{file_ext}",
+                    mime="text/csv",
+                    help="Download the aggregated results file"
+                )
+            else:
+                st.info("Aggregated file unavailable for download")

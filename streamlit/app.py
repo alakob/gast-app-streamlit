@@ -10,6 +10,9 @@ from pathlib import Path
 import os
 import tempfile
 import json
+import requests
+# SSE implementation temporarily disabled
+# from sseclient import SSEClient
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +35,8 @@ sys.path.append(parent_dir)
 # Now import the modules
 import config
 from api_client import create_amr_client, create_bakta_interface, BAKTA_AVAILABLE
+# SSE implementation temporarily disabled
+# from sse_client import get_sse_listener
 from ui_components import (
     create_sidebar,
     create_annotation_settings_tab,
@@ -110,14 +115,17 @@ def check_api_connectivity():
     # Check AMR API
     logger.info("Checking AMR API connectivity")
     try:
+        # ALWAYS FORCE REAL API MODE - Disable mock data completely
+        st.session_state["_mock_job_ids"] = set()  # Clear any mock job tracking
+        st.session_state["_amr_mock_job_ids"] = set()  # Clear AMR-specific mock tracking
+        st.session_state["using_real_amr_api"] = True  # Force real API mode
+        st.session_state["mock_override"] = False  # Disable mock override
+        logger.info("FORCING REAL AMR API MODE - Mock data disabled completely")
+        
         client = create_amr_client()
-        # Check if we're in mock mode based on session state
-        if st.session_state.get("using_real_amr_api", False):
-            logger.info("AMR API connected and using real API")
-            st.session_state.update_amr_status("Connected", "success")
-        else:
-            logger.info("AMR API in mock mode")
-            st.session_state.update_amr_status("Mock Mode", "warning")
+        # Always use real API mode - no conditional check
+        logger.info("AMR API forced to real mode - mock data disabled")
+        st.session_state.update_amr_status("Connected (REAL MODE ONLY)", "success")
     except Exception as e:
         logger.error(f"AMR API connection failed: {str(e)}")
         st.session_state.update_amr_status(f"Not connected: {str(e)}", "error")
@@ -132,11 +140,15 @@ def check_api_connectivity():
                 logger.info("Bakta API connected and using real API")
                 st.session_state.update_bakta_status("Connected", "success")
             else:
-                logger.info("Bakta API in mock mode")
+                logger.info("Bakta API in mock mode - NOT affecting AMR API mode")
+                # Explicitly isolate Bakta mock mode from AMR API
+                logger.info("Ensuring Bakta mock mode doesn't affect AMR API mode")
                 st.session_state.update_bakta_status("Mock Mode", "warning")
         except Exception as e:
             logger.error(f"Bakta API connection failed: {str(e)}")
             st.session_state.update_bakta_status(f"Not connected: {str(e)}", "error")
+            # Explicitly prevent Bakta errors from affecting AMR API mode
+            logger.info("Preventing Bakta errors from affecting AMR API mode")
     else:
         logger.info("Bakta API disabled, skipping connectivity check")
         st.session_state.update_bakta_status("Disabled", "info")
@@ -160,6 +172,11 @@ def submit_amr_job(sequence):
         params = st.session_state.amr_params.copy()
         logger.info(f"AMR parameters prepared: {params}")
         
+        # Force real API mode if possible
+        if st.session_state.get("using_real_amr_api", False):
+            logger.info("Ensuring real API mode is active")
+            st.session_state["mock_override"] = False
+        
         # Submit job
         logger.info(f"Submitting sequence of length {len(sequence)} to AMR API")
         response = client.predict_amr(sequence, params)
@@ -180,6 +197,21 @@ def submit_amr_job(sequence):
         }
         logger.info(f"Adding AMR job to history: {job_data['job_id']}")
         add_job_to_history(job_data)
+        
+        # Force immediate switch to results tab
+        logger.info("Switching to results tab immediately after job submission")
+        st.session_state.active_tab = 2  # Results tab
+        
+        # Request immediate status check
+        st.session_state.force_status_check = True
+        
+        # SSE implementation temporarily disabled
+        # job_id = st.session_state.amr_job_id
+        # if job_id:
+        #     logger.info(f"Starting SSE listener for AMR job: {job_id}")
+        #     sse_listener = get_sse_listener(config.AMR_API_URL)
+        #     sse_listener.start_listening(job_id)
+        #     logger.info("SSE listener started successfully")
         
         return st.session_state.amr_job_id
     
@@ -258,6 +290,13 @@ def submit_bakta_job(sequence):
         logger.info(f"Adding Bakta job to history: {job_id}")
         add_job_to_history(job_data)
         
+        # SSE implementation temporarily disabled
+        # if job_id:
+        #     logger.info(f"Starting SSE listener for Bakta job: {job_id}")
+        #     sse_listener = get_sse_listener(config.AMR_API_URL)
+        #     sse_listener.start_listening(job_id)
+        #     logger.info("SSE listener started successfully")
+        
         return job_id
     
     except Exception as e:
@@ -274,109 +313,223 @@ def check_job_status():
     """Check the status of submitted jobs."""
     logger.info("Checking status of submitted jobs")
     
-    # Check AMR job status
+    # Reset API connection if needed
+    if "reset_api_connection" in st.session_state and st.session_state.reset_api_connection:
+        logger.info("Resetting API connection to force fresh database check")
+        client = create_amr_client()
+        # If client was created successfully, reset the API connection flag
+        st.session_state.reset_api_connection = False
+        # Force real API mode if possible
+        if st.session_state.get("using_real_amr_api", False):
+            logger.info("Real API connection confirmed, forcing real mode")
+            # Clear any mock job tracking to ensure we use real data
+            if "_mock_job_ids" in st.session_state:
+                logger.info("Clearing mock job tracking to ensure real database checks")
+                st.session_state["_mock_job_ids"] = set()
+    
+    # Force real API mode if directly requested
+    if "force_status_check" in st.session_state and st.session_state.force_status_check:
+        logger.info("Force status check requested, ensuring real API mode")
+        client = create_amr_client()
+        st.session_state.force_status_check = False
+        # Force into real mode if the API is available
+        if st.session_state.get("using_real_amr_api", False):
+            logger.info("Real API confirmed available, forcing real mode")
+            st.session_state["mock_override"] = False
+            # Clear any mock job tracking
+            if "_mock_job_ids" in st.session_state:
+                st.session_state["_mock_job_ids"] = set()
+    
+    # Always prioritize using real API if it's available
+    using_real_api = st.session_state.get("using_real_amr_api", False)
+    if using_real_api:
+        logger.info("Using real API to check status")
+        st.session_state["mock_override"] = False
+    else:
+        logger.warning("Using mock mode for status check - this may show incorrect data")
+    
+    # Check AMR prediction jobs
+    status_changed = False
     if "amr_job_id" in st.session_state:
         amr_job_id = st.session_state.amr_job_id
         logger.info(f"Checking AMR job status for ID: {amr_job_id}")
-        try:
-            logger.info("Creating AMR API client for status check")
-            client = create_amr_client()
-            logger.info(f"Requesting status for AMR job: {amr_job_id}")
-            status_response = client.get_prediction_status(amr_job_id)
-            
-            status = status_response.get("status")
-            logger.info(f"AMR job status received: {status}")
-            
-            # Force refresh of session state status to ensure consistency
-            previous_status = st.session_state.get("amr_status", "UNKNOWN")
-            if status != previous_status:
-                logger.info(f"AMR job status changed: {previous_status} -> {status}")
-                
-                # If the status indicates completion but the UI shows running,
-                # we need to force a refresh
-                if status == "SUCCESSFUL" and previous_status != "SUCCESSFUL":
-                    logger.info("Job completed - clearing results cache to force refresh")
-                    if "amr_results" in st.session_state:
-                        del st.session_state.amr_results
-            
-            # Set current status in session state
-            st.session_state.amr_status = status
-            
-            # Update job in history - ensure status is in sync
-            logger.info("Updating AMR job status in job history")
-            updated = False
-            for job in st.session_state.jobs:
-                if job.get("job_id") == amr_job_id:
-                    job["status"] = status
-                    updated = True
-                    break
-            
-            if not updated and status != "UNKNOWN" and status != "ERROR":
-                logger.warning(f"Job {amr_job_id} not found in job history, adding it now")
-                st.session_state.jobs.append({
-                    "job_id": amr_job_id,
-                    "type": "AMR Prediction",
-                    "status": status,
-                    "submitted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
-            
-            # If job is complete, get results
-            if status == "SUCCESSFUL":
-                logger.info(f"AMR job {amr_job_id} completed successfully, fetching results")
-                if "amr_results" not in st.session_state:
-                    logger.info("Requesting AMR prediction results")
-                    results = client.get_prediction_results(amr_job_id)
-                    logger.info(f"AMR results received: {results.get('status', 'NO_STATUS')}")
-                    st.session_state.amr_results = results
-            elif status == "FAILED":
-                logger.error(f"AMR job {amr_job_id} failed")
-                st.session_state.amr_error = "Job processing failed on the server"
-            elif status == "CANCELLED":
-                logger.warning(f"AMR job {amr_job_id} was cancelled")
-        except Exception as e:
-            logger.error(f"Error checking AMR job status: {str(e)}", exc_info=True)
-            st.session_state.amr_error = str(e)
-    else:
-        logger.info("No AMR job ID in session state, skipping AMR status check")
+        status_changed = _legacy_check_amr_status(amr_job_id) or status_changed
     
-    # Check Bakta job status
+    # Check Bakta annotation jobs
     if "bakta_job_id" in st.session_state:
         bakta_job_id = st.session_state.bakta_job_id
         logger.info(f"Checking Bakta job status for ID: {bakta_job_id}")
-        try:
-            logger.info("Creating Bakta API interface for status check")
-            bakta_interface = create_bakta_interface()
-            logger.info(f"Requesting status for Bakta job: {bakta_job_id}")
-            status = bakta_interface.get_job_status(bakta_job_id)
+        status_changed = _legacy_check_bakta_status(bakta_job_id) or status_changed
+        
+    # If status changed to completed, make sure we're on the results tab
+    if status_changed:
+        logger.info("Job status changed, checking if we need to switch tabs")
+        if st.session_state.get("active_tab", 0) != 2:
+            logger.info("Switching to results tab due to status change")
+            st.session_state.active_tab = 2
+            # Rerun needed to refresh UI
+            st.rerun()
+    
+# Legacy status checking functions as fallback
+def _legacy_check_amr_status(amr_job_id):
+    """Method to check AMR job status via database or API."""
+    logger.info(f"Checking AMR job status for: {amr_job_id}")
+    status_changed = False
+    
+    try:
+        # Force real API mode if available
+        using_real_api = st.session_state.get("using_real_amr_api", False)
+        if using_real_api:
+            st.session_state["mock_override"] = False
+            # Explicitly clear this job from mock tracking if it was mistakenly added
+            mock_jobs = st.session_state.get("_mock_job_ids", set())
+            if amr_job_id in mock_jobs:
+                logger.info(f"Removing job {amr_job_id} from mock tracking to force real DB check")
+                mock_jobs.remove(amr_job_id)
+                st.session_state["_mock_job_ids"] = mock_jobs
+        
+        # Create a fresh API client for status check
+        logger.info("Creating AMR API client for status check")
+        client = create_amr_client()
+        
+        # Log what mode we're using
+        if st.session_state.get("using_real_amr_api", False):
+            logger.info("Using real API to check job status")
+        else:
+            logger.warning("Using mock mode for status check - may show incorrect data")
+        
+        # Request status from API/database
+        logger.info(f"Requesting status for AMR job: {amr_job_id}")
+        status_response = client.get_prediction_status(amr_job_id)
+        
+        # Extract status from response and normalize to uppercase
+        raw_status = status_response.get("status", "UNKNOWN")
+        status = raw_status.upper() if isinstance(raw_status, str) else raw_status
+        logger.info(f"AMR job status received: {status} (original: {raw_status})")
+        
+        # Check if we got data from PostgreSQL
+        db_source = status_response.get("source", "unknown")
+        logger.info(f"Status data source: {db_source}")
+        
+        # If we got data from the database, ensure we're using real API mode
+        if db_source == "database" and not using_real_api:
+            logger.info("Received database data but not in real API mode - fixing this")
+            st.session_state["using_real_amr_api"] = True
+            using_real_api = True
+        
+        # Force refresh of session state status to ensure consistency
+        previous_status = st.session_state.get("amr_status", "UNKNOWN")
+        if previous_status != status:
+            logger.info(f"AMR job status changed: {previous_status} -> {status}")
+            status_changed = True
             
-            previous_status = st.session_state.get("bakta_status", "UNKNOWN")
-            if status != previous_status:
-                logger.info(f"Bakta job status changed: {previous_status} -> {status}")
+            # If the status indicates completion but the UI shows running,
+            # we need to force a refresh of results
+            if status in ["SUCCESSFUL", "COMPLETE", "COMPLETED"] and previous_status not in ["SUCCESSFUL", "COMPLETE", "COMPLETED"]:
+                logger.info("Job completed - clearing results cache to force refresh")
+                if "amr_results" in st.session_state:
+                    del st.session_state.amr_results
+                # Force a page refresh to ensure we show the latest data
+                logger.info("Job completed - requesting UI refresh")
+                st.session_state.force_refresh = True
+        
+        # Set current status in session state
+        st.session_state.amr_status = status
+        
+        # Update job in history - ensure status is in sync
+        logger.info("Updating AMR job status in job history")
+        updated = False
+        for job in st.session_state.jobs:
+            if job.get("job_id") == amr_job_id:
+                old_status = job.get("status")
+                job["status"] = status
+                if old_status != status:
+                    logger.info(f"Updated job history status from {old_status} to {status}")
+                    status_changed = True
+                updated = True
+                break
+        
+        if not updated and status not in ["UNKNOWN", "ERROR"]:
+            logger.warning(f"Job {amr_job_id} not found in job history, adding it now")
+            st.session_state.jobs.append({
+                "job_id": amr_job_id,
+                "type": "AMR Prediction",
+                "status": status,
+                "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+            status_changed = True
+        
+        # If job is complete, get results from PostgreSQL/disk
+        if status in ["SUCCESSFUL", "COMPLETE", "COMPLETED"]:
+            logger.info(f"AMR job {amr_job_id} completed successfully, fetching results")
+            # Clear any cached results to force fresh retrieval from database
+            if "amr_results" in st.session_state:
+                logger.info("Clearing cached AMR results to get fresh data")
+                del st.session_state.amr_results
                 
-            st.session_state.bakta_status = status
-            logger.info(f"Bakta job status updated: {status}")
+            logger.info("Requesting AMR prediction results from database/disk")
+            results = client.get_prediction_results(amr_job_id)
             
-            # Update job in history
-            logger.info("Updating Bakta job status in job history")
-            for job in st.session_state.jobs:
-                if job.get("job_id") == bakta_job_id:
-                    job["status"] = status
+            if results:
+                logger.info(f"AMR results received: {results.get('status', 'NO_STATUS')}")
+                st.session_state.amr_results = results
+                
+                # Force switch to results tab if not already there
+                if st.session_state.get("active_tab", 0) != 2:
+                    logger.info("Switching to results tab since job is complete")
+                    st.session_state.active_tab = 2
+                    status_changed = True
+            else:
+                logger.warning("No results data received from API")
+        elif status == "FAILED":
+            logger.error(f"AMR job {amr_job_id} failed")
+            st.session_state.amr_error = "Job processing failed on the server"
+        elif status == "CANCELLED":
+            logger.warning(f"AMR job {amr_job_id} was cancelled")
+    except Exception as e:
+        logger.error(f"Error checking AMR job status: {str(e)}", exc_info=True)
+        st.session_state.amr_error = str(e)
+        
+    # Return whether the status changed to inform caller
+    return status_changed
+
+def _legacy_check_bakta_status(bakta_job_id):
+    """Legacy method to check Bakta job status via polling (fallback)."""
+    logger.info(f"Using legacy polling to check Bakta job status for: {bakta_job_id}")
+    try:
+        logger.info("Creating Bakta API interface for status check")
+        bakta_interface = create_bakta_interface()
+        logger.info(f"Requesting status for Bakta job: {bakta_job_id}")
+        status = bakta_interface.get_job_status(bakta_job_id)
+        
+        previous_status = st.session_state.get("bakta_status", "UNKNOWN")
+        if status != previous_status:
+            logger.info(f"Bakta job status changed: {previous_status} -> {status}")
             
-            # If job is complete, get results
-            if status == "SUCCESSFUL":
-                logger.info(f"Bakta job {bakta_job_id} completed successfully, fetching results")
-                if "bakta_results" not in st.session_state:
-                    logger.info("Requesting Bakta annotation results")
-                    results = bakta_interface.get_job_results(bakta_job_id)
-                    logger.info("Bakta results received and stored in session state")
-                    st.session_state.bakta_results = results
-            elif status == "FAILED":
-                logger.error(f"Bakta job {bakta_job_id} failed")
-            elif status == "CANCELLED":
-                logger.warning(f"Bakta job {bakta_job_id} was cancelled")
-        except Exception as e:
-            logger.error(f"Error checking Bakta job status: {str(e)}", exc_info=True)
-            st.session_state.bakta_error = str(e)
+        st.session_state.bakta_status = status
+        logger.info(f"Bakta job status updated: {status}")
+        
+        # Update job in history
+        logger.info("Updating Bakta job status in job history")
+        for job in st.session_state.jobs:
+            if job.get("job_id") == bakta_job_id:
+                job["status"] = status
+        
+        # If job is complete, get results
+        if status == "SUCCESSFUL":
+            logger.info(f"Bakta job {bakta_job_id} completed successfully, fetching results")
+            if "bakta_results" not in st.session_state:
+                logger.info("Requesting Bakta annotation results")
+                results = bakta_interface.get_job_results(bakta_job_id)
+                logger.info("Bakta results received and stored in session state")
+                st.session_state.bakta_results = results
+        elif status == "FAILED":
+            logger.error(f"Bakta job {bakta_job_id} failed")
+        elif status == "CANCELLED":
+            logger.warning(f"Bakta job {bakta_job_id} was cancelled")
+    except Exception as e:
+        logger.error(f"Error checking Bakta job status: {str(e)}", exc_info=True)
+        st.session_state.bakta_error = str(e)
     else:
         logger.info("No Bakta job ID in session state, skipping Bakta status check")
         
@@ -459,9 +612,19 @@ def process_submission():
                 del st.session_state.bakta_results
     
     logger.info("Sequence submission processing completed")
-    # Auto-navigate to results tab
+    # Force real API mode
+    logger.info("Forcing real API mode to ensure database checks")
+    st.session_state["using_real_amr_api"] = True
+    if "_mock_job_ids" in st.session_state:
+        logger.info("Clearing mock job tracking")
+        st.session_state["_mock_job_ids"] = set()
+    
+    # Auto-navigate to results tab with force refresh
     logger.info("Auto-navigating to results tab")
     st.session_state.active_tab = 2  # Results tab
+    
+    # Set flag to force an immediate rerun to apply tab change
+    st.session_state.force_rerun = True
 
 # Create the sidebar
 create_sidebar()
@@ -540,45 +703,80 @@ with tab2:
         st.session_state.submit_clicked = False
         # Switch to Results tab (index 2)
         st.session_state.active_tab = 2
+        # Force immediate check of job status with real API
+        st.session_state.force_status_check = True
         st.rerun()  # Rerun the app to activate the selected tab
 
 with tab3:
     create_results_tab()
     
+    # Check if force_rerun is requested
+    if "force_rerun" in st.session_state and st.session_state.force_rerun:
+        logger.info("Force rerun detected in results tab - forcing immediate database check")
+        # Force real API mode
+        st.session_state["using_real_amr_api"] = True
+        # Clear any mock job tracking
+        if "_mock_job_ids" in st.session_state:
+            st.session_state["_mock_job_ids"] = set()
+        # Reset the flag
+        st.session_state.force_rerun = False
+        # Force a page rerun to apply changes
+        st.rerun()
+    
     # Check job statuses periodically
     if "amr_job_id" in st.session_state or "bakta_job_id" in st.session_state:
+        # Always force a fresh status check in real mode
+        st.session_state["using_real_amr_api"] = True
         check_job_status()
         
         # Add refresh button if jobs are still running
-        if (st.session_state.get("amr_status") not in ["SUCCESSFUL", "FAILED", "CANCELLED"] or
-            st.session_state.get("bakta_status") not in ["SUCCESSFUL", "FAILED", "CANCELLED"]):
+        status_list = ["SUCCESSFUL", "FAILED", "CANCELLED", "COMPLETED", "COMPLETE"]
+        if (st.session_state.get("amr_status", "").upper() not in status_list or
+            st.session_state.get("bakta_status", "").upper() not in status_list):
             
             if st.button("Refresh Status"):
+                # Force database check with real mode
+                st.session_state["using_real_amr_api"] = True
+                st.session_state["_mock_job_ids"] = set()
                 check_job_status()
                 st.rerun()
 
 with tab4:
     create_job_management_tab()
 
-# Add auto-refresh for running jobs
+# Revert to traditional polling for running jobs
 if "amr_job_id" in st.session_state or "bakta_job_id" in st.session_state:
-    # Check if status is one that requires auto-refresh
+    # Check if status is one that requires updates
     amr_status = st.session_state.get("amr_status", "")
     bakta_status = st.session_state.get("bakta_status", "")
     
-    # Non-final statuses that need refreshing
-    running_statuses = ["SUBMITTED", "PENDING", "QUEUED", "RUNNING", "PROCESSING", ""]
+    # Non-final statuses
+    running_statuses = ["SUBMITTED", "PENDING", "QUEUED", "RUNNING", "PROCESSING"]
     
-    # Check if any job is in a running state
-    is_running = (amr_status in running_statuses or bakta_status in running_statuses)
+    # Complete status values (case-insensitive check)
+    complete_statuses = ["COMPLETED", "COMPLETE", "SUCCESSFUL", "SUCCESS", "DONE", "FINISHED"]
     
-    if is_running:
+    # First, normalize statuses for case-insensitive comparison
+    amr_status_upper = amr_status.upper() if amr_status else ""
+    bakta_status_upper = bakta_status.upper() if bakta_status else ""
+    
+    # Check if any job is actually in a running state
+    is_running = (amr_status_upper in [s.upper() for s in running_statuses] or 
+                 bakta_status_upper in [s.upper() for s in running_statuses])
+    
+    # Check if we have at least one job but none are completed
+    has_jobs = ("amr_job_id" in st.session_state or "bakta_job_id" in st.session_state)
+    is_completed = (amr_status_upper in [s.upper() for s in complete_statuses] or 
+                   bakta_status_upper in [s.upper() for s in complete_statuses])
+    
+    # Only show running message and auto-refresh if jobs are actually running
+    if is_running and has_jobs and not is_completed:
         st.markdown("---")
-        st.info("Jobs are still running. Status will refresh automatically.")
+        st.info("Jobs are running. Status will refresh automatically.")
         
-        # Explicitly check job status before rerunning
+        # Check job status manually
         check_job_status()
         
-        # Wait before rerunning
-        time.sleep(5)  # Wait 5 seconds
+        # Add a small delay and rerun to refresh the UI
+        time.sleep(5)  # 5 second refresh interval
         st.rerun()

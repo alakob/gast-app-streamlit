@@ -13,22 +13,27 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements file
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install PostgreSQL client and Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt \
+    # Add PostgreSQL dependencies if not in requirements.txt
+    && pip install --no-cache-dir psycopg2-binary python-dotenv
 
 # Copy application code
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p /app/bakta_data /app/results
+# Create results directory
+RUN mkdir -p /app/results
 
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV BAKTA_DATA_DIR=/app/bakta_data
 ENV RESULTS_DIR=/app/results
 
 # Expose the API port
 EXPOSE 8000
 
-# Command to run the application
+# Healthcheck to ensure API is responding
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Command to run the API
 CMD ["uvicorn", "amr_predictor.web.api:app", "--host", "0.0.0.0", "--port", "8000"]

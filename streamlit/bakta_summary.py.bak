@@ -1305,7 +1305,275 @@ def display_bakta_summary(job_id: str = None, bakta_data: Dict[str, Any] = None)
             
             # Add a divider before continuing to the next sections
             st.markdown("---")
-
+            
+            # Next, display AMR Genes Section (moved to top per user request)
+            st.subheader("Antimicrobial Resistance Genes")
+            
+            # Check if expert key exists and display its contents for debugging
+            has_expert_data = False
+            if 'expert' in bakta_data and bakta_data['expert']:
+                expert_count = len(bakta_data['expert'])
+                has_expert_data = True
+                logger.info(f"BAKTA-SUMMARY - 🌟 Found {expert_count} expert entries in display_bakta_summary")
+                print(f"\033[32mExpert data available in UI display\033[0m: {expert_count} entries", file=sys.stderr)
+                
+                # Enhanced debug expander - always expanded during debugging to verify data is present
+                with st.expander(f"Expert Data ({expert_count} entries)", expanded=True):
+                    # Show a summary first
+                    st.write(f"**Found {expert_count} entries in the expert section**")
+                    
+                    # Create a simple table of types
+                    types = [entry.get('type', 'unknown') for entry in bakta_data['expert']]
+                    type_counts = {}
+                    for t in types:
+                        if t in type_counts:
+                            type_counts[t] += 1
+                        else:
+                            type_counts[t] = 1
+                    
+                    st.write("**Expert entry types:**")
+                    for t, count in type_counts.items():
+                        st.write(f"- {t}: {count} entries")
+                    
+                    # Show the raw data
+                    st.json(bakta_data['expert'])
+            
+            # Extract AMR genes
+            amr_genes = get_amr_genes(bakta_data)
+            expert_entries = [entry for entry in amr_genes if entry.get("Evidence") == "Expert System"]
+            
+            # Always show tabs regardless of whether we found AMR genes
+            amr_tabs = st.tabs(["Table View", "Expert Details"])
+            
+            with amr_tabs[0]:
+                if amr_genes:
+                    # Convert to DataFrame for display
+                    amr_df = pd.DataFrame(amr_genes)
+                    
+                    # Basic table with essential AMR information
+                    st.dataframe(
+                        amr_df,
+                        column_config={
+                            "Gene": st.column_config.TextColumn("Gene"),
+                            "Product": st.column_config.TextColumn("Product"),
+                            "Database": st.column_config.TextColumn("Database"),
+                            "Evidence": st.column_config.TextColumn("Evidence"),
+                            "Contig": st.column_config.TextColumn("Contig") if "Contig" in amr_df.columns else None,
+                            "Start": st.column_config.NumberColumn("Start") if "Start" in amr_df.columns else None,
+                            "End": st.column_config.NumberColumn("End") if "End" in amr_df.columns else None,
+                            "Strand": st.column_config.TextColumn("Strand") if "Strand" in amr_df.columns else None,
+                        },
+                        hide_index=True
+                    )
+                else:
+                    if has_expert_data:
+                        st.warning("No AMR genes identified in features, but expert data is available in the Expert Details tab.")
+                    else:
+                        st.info("No antimicrobial resistance genes detected.")
+            
+            with amr_tabs[1]:
+                if expert_entries:
+                    # Expert system details with additional metrics
+                    expert_df = pd.DataFrame(expert_entries)
+                    st.dataframe(
+                        expert_df,
+                        column_config={
+                            "Gene": st.column_config.TextColumn("Gene"),
+                            "Product": st.column_config.TextColumn("Product"),
+                            "Method": st.column_config.TextColumn("Method"),
+                            "Identity": st.column_config.TextColumn("Identity"),
+                            "Rank": st.column_config.NumberColumn("Rank"),
+                            "Database": st.column_config.TextColumn("Database"),
+                            "DB_ID": st.column_config.TextColumn("Database ID"),
+                        },
+                        hide_index=True
+                    )
+                    
+                    # Add explanatory text
+                    st.info(
+                        "Expert system findings provide high-confidence AMR gene annotations using specialized databases. "
+                        "The Identity percentage indicates sequence similarity, and Rank reflects the confidence score."
+                    )
+                else:
+                    if has_expert_data:
+                        st.warning(
+                            "Expert data is available but no AMR-related entries were found. "
+                            "You can view the raw expert data in the expander above."
+                        )
+                    else:
+                        st.info("No expert system AMR annotations available for this genome.")
+            
+            # Add summary tabs after the AMR section
+            debug_tab1, debug_tab2 = st.tabs(["Summary Data", "Raw Data"])
+            
+            with debug_tab1:
+                if bakta_data:
+                    # Show information about the data structure
+                    if 'stats' in bakta_data and 'genome' in bakta_data and 'features' in bakta_data:
+                        #st.success("✅ This is a complete analysis results file")
+                        st.write(f"Contains: {len(bakta_data.get('features', []))} features")
+                        st.write(f"Contains: {len(bakta_data.get('sequences', []))} sequences")
+                        if 'run' in bakta_data:
+                            st.write(f"Analysis duration: {bakta_data['run'].get('duration', 'Unknown')}")
+                            st.write(f"Analysis date: {bakta_data['run'].get('start', 'Unknown')}")
+                    else:
+                        st.warning("⚠️ This data structure is different from what we expected")
+                        st.write(f"Available keys: {list(bakta_data.keys())}")
+                else:
+                    st.error("No Bakta data available")
+            
+            with debug_tab2:
+                if bakta_data:
+                    st.json(bakta_data)
+                else:
+                    st.error("No data to display")
+        
+        # Genome Overview Section
+        st.subheader("Genome Overview")
+        
+        # First try the standard format
+        genome_stats = extract_genome_statistics(bakta_data)
+        
+        # If that failed, try alternate formats
+        if not genome_stats or all(v == 0 or v == "0 bp" or v == "0.00%" or v == "Unknown" for v in genome_stats.values()):
+            logger.info(f"BAKTA-SUMMARY - 🔄 Standard format didn't yield results for job {job_id}, trying alternate formats")
+            # Log the full data structure for debugging
+            logger.info(f"BAKTA-SUMMARY - 🔍 Data structure: {str(bakta_data)[:1000]}...")
+            
+            # Try to extract from various potential structures
+            genome_stats = {}
+            
+            # Try to extract genome length
+            if 'length' in bakta_data:
+                genome_stats["Genome Length"] = f"{bakta_data['length']:,} bp" if isinstance(bakta_data['length'], (int, float)) else bakta_data['length']
+            elif 'stats' in bakta_data and 'length' in bakta_data['stats']:
+                genome_stats["Genome Length"] = f"{bakta_data['stats']['length']:,} bp" if isinstance(bakta_data['stats']['length'], (int, float)) else bakta_data['stats']['length']
+            
+            # Try to extract GC content
+            if 'gc' in bakta_data:
+                genome_stats["GC Content"] = f"{bakta_data['gc']:.2f}%" if isinstance(bakta_data['gc'], (int, float)) else bakta_data['gc']
+            elif 'stats' in bakta_data and 'gc' in bakta_data['stats']:
+                genome_stats["GC Content"] = f"{bakta_data['stats']['gc']:.2f}%" if isinstance(bakta_data['stats']['gc'], (int, float)) else bakta_data['stats']['gc']
+            
+            # Try to extract organism name
+            if 'organism' in bakta_data:
+                genome_stats["Organism"] = bakta_data['organism']
+            elif 'name' in bakta_data:
+                genome_stats["Organism"] = bakta_data['name']
+            elif 'info' in bakta_data and 'name' in bakta_data['info']:
+                genome_stats["Organism"] = bakta_data['info']['name']
+                
+            # Try to extract contig count
+            if 'contigs' in bakta_data:
+                genome_stats["Contigs"] = bakta_data['contigs'] if isinstance(bakta_data['contigs'], (int, float)) else 0
+            elif 'stats' in bakta_data and 'contigs' in bakta_data['stats']:
+                genome_stats["Contigs"] = bakta_data['stats']['contigs'] if isinstance(bakta_data['stats']['contigs'], (int, float)) else 0
+            
+            # Try to extract gene counts
+            if 'stats' in bakta_data and 'cds' in bakta_data['stats']:
+                genome_stats["Protein Coding Genes"] = bakta_data['stats']['cds']
+                genome_stats["Total Features"] = (
+                    bakta_data['stats'].get('cds', 0) + 
+                    bakta_data['stats'].get('rna', 0) + 
+                    bakta_data['stats'].get('trna', 0) + 
+                    bakta_data['stats'].get('rrna', 0) + 
+                    bakta_data['stats'].get('ncrna', 0)
+                )
+        
+        # Create a grid of metrics
+        col1, col2, col3 = st.columns(3)
+        
+        # Format metrics in a consistent way
+        col1.metric("Genome Length", genome_stats.get("Genome Length", "Unknown"))
+        col1.metric("GC Content", genome_stats.get("GC Content", "Unknown"))
+        
+        col2.metric("Organism", genome_stats.get("Organism", "Unknown"))
+        col2.metric("Contigs", genome_stats.get("Contigs", "Unknown"))
+        
+        col3.metric("Total Features", genome_stats.get("Total Features", "Unknown"))
+        col3.metric("Protein Coding Genes", genome_stats.get("Protein Coding Genes", "Unknown"))
+        
+        # Additional metrics
+        with st.expander("Additional Genome Statistics", expanded=False):
+                col1, col2 = st.columns(2)
+                col1.metric("rRNA Genes", genome_stats.get("rRNA Genes", "Unknown"))
+                col1.metric("tRNA Genes", genome_stats.get("tRNA Genes", "Unknown"))
+                
+                col2.metric("CRISPR Arrays", genome_stats.get("CRISPR Arrays", "Unknown"))
+                col2.metric("ncRNA Genes", genome_stats.get("ncRNA Genes", "Unknown"))
+        
+        # 2. Functional Categories Section
+        st.subheader("Functional Categories")
+        
+        categories = get_functional_categories(bakta_data)
+        if categories:
+            # Create bar chart for functional categories
+            category_df = pd.DataFrame({
+                'Category': list(categories.keys()),
+                'Count': list(categories.values())
+            })
+            category_df = category_df.sort_values('Count', ascending=False)
+            
+            st.bar_chart(category_df.set_index('Category'))
+            
+            # Show table with counts
+            with st.expander("View Category Counts", expanded=False):
+                st.table(category_df)
+        else:
+            st.info("No functional category data available.")
+        
+        # 3. Virulence Factors Section (AMR Genes section moved to the top)
+        
+        # 4. Virulence Factors Section
+        st.subheader("Virulence Factors")
+        
+        virulence_factors = get_virulence_factors(bakta_data)
+        if virulence_factors:
+            # Convert to DataFrame for display
+            vf_df = pd.DataFrame(virulence_factors)
+            
+            # Style the table
+            st.dataframe(
+                vf_df,
+                column_config={
+                    "Gene": st.column_config.TextColumn("Gene"),
+                    "Product": st.column_config.TextColumn("Product"),
+                    "Contig": st.column_config.TextColumn("Contig"),
+                    "Start": st.column_config.NumberColumn("Start"),
+                    "End": st.column_config.NumberColumn("End"),
+                    "Strand": st.column_config.TextColumn("Strand"),
+                    "Source": st.column_config.TextColumn("Source")
+                },
+                hide_index=True
+            )
+        else:
+            st.info("No virulence factors detected.")
+        
+        # 5. Mobile Genetic Elements Section
+        st.subheader("Mobile Genetic Elements")
+        
+        mobile_elements = get_mobile_elements(bakta_data)
+        if mobile_elements:
+            # Convert to DataFrame for display
+            mobile_df = pd.DataFrame(mobile_elements)
+            
+            # Style the table
+            st.dataframe(
+                mobile_df,
+                column_config={
+                    "Type": st.column_config.TextColumn("Type"),
+                    "Gene": st.column_config.TextColumn("Gene"),
+                    "Product": st.column_config.TextColumn("Product"),
+                    "Contig": st.column_config.TextColumn("Contig"),
+                    "Start": st.column_config.NumberColumn("Start"),
+                    "End": st.column_config.NumberColumn("End"),
+                    "Strand": st.column_config.TextColumn("Strand")
+                },
+                hide_index=True
+            )
+        else:
+            st.info("No mobile genetic elements detected.")
+            
     except Exception as e:
         logger.error(f"Error displaying Bakta summary: {str(e)}")
         st.error(f"An error occurred while displaying the annotation summary: {str(e)}")

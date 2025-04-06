@@ -1,4 +1,7 @@
 
+# Environment variables are loaded from .env file
+# Valid ENVIRONMENT values: dev, test, prod
+
 services:
   # PostgreSQL Database
   postgres:
@@ -47,7 +50,9 @@ services:
   amr-api:
     build:
       context: .
-      dockerfile: Dockerfile.api.dev  # Using development Dockerfile with hot reload
+      dockerfile: ${API_DOCKERFILE:-Dockerfile.api.dev}  # Using configurable Dockerfile
+      args:
+        - ENVIRONMENT=${ENVIRONMENT:-dev}
     container_name: amr_api
     depends_on:
       postgres:
@@ -63,6 +68,7 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-dev}
       - BAKTA_API_URL=${BAKTA_API_URL:-https://bakta.computational.bio/api/v1}
       - BAKTA_API_KEY=${BAKTA_API_KEY:-}
+      - PYTHONPATH=/app
     volumes:
       - ./amr_predictor:/app/amr_predictor
       - result_data:/app/results
@@ -76,12 +82,15 @@ services:
   streamlit:
     build:
       context: .
-      dockerfile: Dockerfile.streamlit
+      dockerfile: ${STREAMLIT_DOCKERFILE:-Dockerfile.streamlit}
+      args:
+        - ENVIRONMENT=${ENVIRONMENT:-dev}
     container_name: amr_streamlit
     depends_on:
       - amr-api
     environment:
       - AMR_API_URL=http://amr-api:8000
+      - ENVIRONMENT=${ENVIRONMENT:-dev}
       # Bakta API configuration
       - BAKTA_API_URL=https://bakta.computational.bio/api/v1
       - BAKTA_API_KEY=${BAKTA_API_KEY:-testkey-bakta-integration-01}
@@ -92,6 +101,7 @@ services:
       - BAKTA_TOKEN_REFRESH_SECONDS=3600
       - BAKTA_REQUEST_TIMEOUT=30
       - BAKTA_MAX_RETRIES=3
+      - PYTHONPATH=/app
     volumes:
       - ./streamlit:/app/streamlit
       - ./amr_predictor:/app/amr_predictor

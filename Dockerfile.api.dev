@@ -10,12 +10,26 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
-COPY requirements.txt .
+# Accept build argument for environment
+ARG ENVIRONMENT=dev
 
-# Install dependencies with hot reload packages
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir psycopg2-binary python-dotenv uvicorn[standard] watchfiles
+# Copy requirements files
+COPY requirements.txt .
+COPY requirements-dev.txt .
+COPY requirements-test.txt .
+
+# Install dependencies based on environment
+RUN if [ "$ENVIRONMENT" = "dev" ]; then \
+      echo "Installing dependencies for DEVELOPMENT environment"; \
+      pip install --no-cache-dir -r requirements-dev.txt; \
+    elif [ "$ENVIRONMENT" = "test" ]; then \
+      echo "Installing dependencies for TEST environment"; \
+      pip install --no-cache-dir -r requirements-test.txt; \
+    else \
+      echo "Installing dependencies for PRODUCTION environment"; \
+      pip install --no-cache-dir -r requirements.txt; \
+    fi \
+    && pip install --no-cache-dir psycopg2-binary python-dotenv uvicorn[standard] watchfiles sqlalchemy==2.0.40
 
 # Copy application code
 COPY . .
@@ -34,5 +48,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Command with hot reload
-CMD ["uvicorn", "amr_predictor.web.api:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/amr_predictor"]
+# Command with hot reload for dev, normal for prod
+CMD if [ "$ENVIRONMENT" = "dev" ] || [ "$ENVIRONMENT" = "test" ]; then \
+      uvicorn amr_predictor.web.api:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/amr_predictor; \
+    else \
+      uvicorn amr_predictor.web.api:app --host 0.0.0.0 --port 8000; \
+    fi

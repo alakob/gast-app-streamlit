@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional, Union
 
 import streamlit as st
 import pandas as pd
+import sqlalchemy
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
@@ -486,6 +487,42 @@ def view_amr_prediction_result(job: AMRJob, db_manager: DatabaseManager) -> None
                         resistant_count = sum(1 for row in table_data if row["Prediction"] == "Resistant")
                         resistant_pct = (resistant_count / total * 100) if total > 0 else 0
                         
+                        # Add DSM Antibiotics section above the Summary
+                        st.subheader("DSM Antibiotics")
+                        
+                        # Create a collapsible accordion for the DSM Antibiotics table (collapsed by default)
+                        with st.expander("View DSM Antibiotics Database", expanded=False):
+                            try:
+                                # Connect to the database
+                                conn_str = f"postgresql://postgres:postgres@postgres:5432/amr_predictor_dev"
+                                engine = sqlalchemy.create_engine(conn_str)
+                                
+                                # Query the amr_dsm_antibiotics table
+                                query = "SELECT * FROM amr_dsm_antibiotics"
+                                df_antibiotics = pd.read_sql(query, engine)
+                                
+                                # Display the table
+                                if not df_antibiotics.empty:
+                                    st.dataframe(
+                                        df_antibiotics,
+                                        column_config={
+                                            "Antibiotic": st.column_config.TextColumn("Antibiotic"),
+                                            "Antibiotic_Class": st.column_config.TextColumn("Antibiotic Class"),
+                                            "WGS-predicted phenotype": st.column_config.TextColumn("WGS-predicted Phenotype"),
+                                            "WGS-predicted genotype": st.column_config.TextColumn("WGS-predicted Genotype"),
+                                            "MIC_range": st.column_config.TextColumn("MIC Range")
+                                        },
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                    st.info(f"Showing {len(df_antibiotics)} antibiotics from the DSM database")
+                                else:
+                                    st.warning("No antibiotic data found in the database.")
+                            except Exception as e:
+                                st.error(f"Error loading DSM antibiotics data: {str(e)}")
+                                logger.error(f"Error connecting to PostgreSQL or loading DSM antibiotics data: {str(e)}")
+                        
+                        # Summary section
                         st.info(f"Summary: {resistant_count} out of {total} drugs show resistance ({resistant_pct:.1f}%)")
                         
                     else:  # JSON view

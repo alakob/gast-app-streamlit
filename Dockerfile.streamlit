@@ -10,8 +10,13 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Accept build argument for environment
+ARG ENVIRONMENT=dev
+
+# Copy core requirements files
 COPY requirements.txt .
+COPY requirements-dev.txt .
+COPY requirements-test.txt .
 
 # Create a dedicated Streamlit requirements file if it doesn't exist
 RUN echo "streamlit>=1.22.0" > streamlit_requirements.txt
@@ -19,14 +24,24 @@ RUN echo "streamlit>=1.22.0" > streamlit_requirements.txt
 # Copy application code first to ensure amr_predictor is available for installation
 COPY . .
 
-# Install Python dependencies and the local amr_predictor package
-RUN pip install --no-cache-dir -r requirements.txt \
+# Install Python dependencies based on environment and the local amr_predictor package
+RUN if [ "$ENVIRONMENT" = "dev" ]; then \
+      echo "Installing dependencies for DEVELOPMENT environment"; \
+      pip install --no-cache-dir -r requirements-dev.txt; \
+    elif [ "$ENVIRONMENT" = "test" ]; then \
+      echo "Installing dependencies for TEST environment"; \
+      pip install --no-cache-dir -r requirements-test.txt; \
+    else \
+      echo "Installing dependencies for PRODUCTION environment"; \
+      pip install --no-cache-dir -r requirements.txt; \
+    fi \
     && pip install --no-cache-dir -r streamlit_requirements.txt \
     && pip install -e . \
     && python -c "import sys; print('Python packages installed successfully.')"  \
     && python -m pip list | grep amr_predictor \
     && python -c "import amr_predictor; print('Verified main package import: ' + amr_predictor.__name__)" \
     && python -c "try: \n  import amr_predictor.bakta; \n  print('✓ Bakta module imported successfully: ' + amr_predictor.bakta.__name__); \nexcept ImportError as e: \n  print('✗ Bakta module import failed: ' + str(e)); \n  exit(1)" \
+    && pip install --no-cache-dir sqlalchemy==2.0.40 psycopg2-binary==2.9.10 \
     && mkdir -p /app/results/bakta
 
 # Set environment variables

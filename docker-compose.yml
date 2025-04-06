@@ -82,6 +82,16 @@ services:
       - amr-api
     environment:
       - AMR_API_URL=http://amr-api:8000
+      # Bakta API configuration
+      - BAKTA_API_URL=https://bakta.computational.bio/api/v1
+      - BAKTA_API_KEY=${BAKTA_API_KEY:-testkey-bakta-integration-01}
+      - BAKTA_RESULTS_DIR=/app/results/bakta
+      - BAKTA_API_URL_DEV=https://bakta.computational.bio/api/v1
+      - BAKTA_API_URL_TEST=https://bakta.computational.bio/api/v1
+      - BAKTA_API_URL_PROD=https://bakta.computational.bio/api/v1
+      - BAKTA_TOKEN_REFRESH_SECONDS=3600
+      - BAKTA_REQUEST_TIMEOUT=30
+      - BAKTA_MAX_RETRIES=3
     volumes:
       - ./streamlit:/app/streamlit
       - ./amr_predictor:/app/amr_predictor

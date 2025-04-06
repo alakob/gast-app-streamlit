@@ -5,10 +5,27 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import logging
 from typing import Dict, Any, List, Optional, Callable, Tuple
+
+# Set up logging
+logger = logging.getLogger("ui_components")
 
 # Import column formatting utility
 from utils import format_column_names
+
+# Import Bakta visualizations and summary if available
+try:
+    import bakta_visualizations
+    BAKTA_VIZ_AVAILABLE = True
+except ImportError:
+    BAKTA_VIZ_AVAILABLE = False
+    
+try:
+    import bakta_summary
+    BAKTA_SUMMARY_AVAILABLE = True
+except ImportError:
+    BAKTA_SUMMARY_AVAILABLE = False
 
 def create_sidebar() -> None:
     """Create the application sidebar with configuration options."""
@@ -191,6 +208,13 @@ def create_sidebar() -> None:
         "genes in bacterial genomes and optional genome annotation "
         "using Bakta."
     )
+    st.sidebar.markdown("Created by [Blaise Alako](https://www.linkedin.com/in/blaisealako/).")
+    # Add "GitHub" link to the sidebar
+    st.sidebar.markdown(
+        "[GitHub](https://github.com/alakob/)"
+    )
+    st.sidebar.markdown("""---""")
+
 
 def get_status_icon(status: str) -> str:
     """
@@ -231,9 +255,12 @@ def create_annotation_settings_tab() -> None:
             # If Bakta is disabled, update status accordingly
             st.session_state.update_bakta_status("Disabled", "info")
     
-    # Enable/disable Bakta annotation
-    if "enable_bakta" not in st.session_state:
-        st.session_state.enable_bakta = False
+    # Enable/disable Bakta annotation - always default to enabled
+    # Force enable bakta if it's not explicitly set or if it's False
+    if "enable_bakta" not in st.session_state or st.session_state.enable_bakta is False:
+        st.session_state.enable_bakta = True
+        # Trigger the on_change callback manually to ensure API connection is tested
+        on_bakta_enable_change()
         
     st.checkbox(
         "Enable Bakta genome annotation",
@@ -633,8 +660,8 @@ def create_results_tab() -> None:
     """Create the Results tab content."""
     st.subheader("Analysis Results")
     
-    # Create tabs for current results and results history
-    current_tab, history_tab = st.tabs(["Current Analysis", "Results History"])
+    # Create tabs for current results, annotation, and results history
+    current_tab, annotation_tab, history_tab = st.tabs(["Current Analysis", "Annotation", "Results History"])
     
     # Current Analysis Tab
     with current_tab:
@@ -714,6 +741,16 @@ def create_results_tab() -> None:
                             progress_bar.progress(progress_values.get(amr_status, 0.5))
                             
                             # Add auto-refresh button
+                            # Check if we should auto-refresh (either from force_status_check or auto_refresh_amr flag)
+                            if st.session_state.get("force_status_check", False) or st.session_state.get("auto_refresh_amr", False):
+                                # Reset the flags to prevent infinite loop
+                                st.session_state["auto_refresh_amr"] = False
+                                if "force_status_check" in st.session_state:
+                                    st.session_state["force_status_check"] = False
+                                # This will trigger the app's check_job_status function via rerun
+                                st.rerun()
+                            
+                            # Manual refresh button
                             if st.button("Check Status Now", key="refresh_amr_status"):
                                 # This will trigger the app's check_job_status function via rerun
                                 st.rerun()
@@ -871,6 +908,16 @@ def create_results_tab() -> None:
                                 progress_bar.progress(progress_values.get(bakta_status, 0.5))
                                 
                                 # Add auto-refresh button
+                                # Check if we should auto-refresh (force_status_check or auto_refresh_bakta flag)
+                                if st.session_state.get("force_status_check", False) or st.session_state.get("auto_refresh_bakta", False):
+                                    # Reset the flags to prevent infinite loop
+                                    st.session_state["auto_refresh_bakta"] = False
+                                    if "force_status_check" in st.session_state:
+                                        st.session_state["force_status_check"] = False
+                                    # This will trigger the app's check_job_status function via rerun
+                                    st.rerun()
+                                
+                                # Manual refresh button
                                 if st.button("Check Status Now", key="refresh_bakta_status"):
                                     # This will trigger the app's check_job_status function
                                     st.rerun()
@@ -883,9 +930,10 @@ def create_results_tab() -> None:
                         
                         if "bakta_results" in st.session_state and st.session_state.bakta_results:
                             # Add view toggle
+                            view_options = ["Summary", "Visualizations", "JSON", "Files"] if BAKTA_VIZ_AVAILABLE else ["Summary", "JSON", "Files"]
                             view_mode = st.radio(
                                 "View as:",
-                                options=["Summary", "JSON", "Files"],
+                                options=view_options,
                                 index=0,
                                 horizontal=True,
                                 key="bakta_view_mode"
@@ -895,16 +943,40 @@ def create_results_tab() -> None:
                     
                         # Now view_mode is guaranteed to be defined
                         if view_mode == "Summary":
-                            # Display a summary of the annotation results
-                            # This would be customized based on the actual structure
-                            st.write("Annotation Summary")
-                            
-                            # Example summary metrics
-                            if "summary" in results:
-                                summary = results["summary"]
-                                cols = st.columns(3)
-                                for i, (key, value) in enumerate(summary.items()):
-                                    cols[i % 3].metric(key, value)
+                            # Display comprehensive annotation summary using the specialized module
+                            if BAKTA_SUMMARY_AVAILABLE:
+                                try:
+                                    # Use the bakta_summary module to display rich summary
+                                    bakta_summary.display_bakta_summary(bakta_job_id, results)
+                                except Exception as e:
+                                    st.error(f"Error displaying Bakta summary: {str(e)}")
+                                    logger.error(f"Error in Bakta summary: {str(e)}", exc_info=True)
+                                    
+                                    # Fallback to basic summary if the detailed one fails
+                                    st.write("Basic Annotation Summary (Fallback)")
+                                    if "summary" in results:
+                                        summary = results["summary"]
+                                        cols = st.columns(3)
+                                        for i, (key, value) in enumerate(summary.items()):
+                                            cols[i % 3].metric(key, value)
+                            else:
+                                # Basic summary if the specialized module is not available
+                                st.write("Annotation Summary")
+                                
+                                # Example summary metrics
+                                if "summary" in results:
+                                    summary = results["summary"]
+                                    cols = st.columns(3)
+                                    for i, (key, value) in enumerate(summary.items()):
+                                        cols[i % 3].metric(key, value)
+                                    
+                        elif view_mode == "Visualizations" and BAKTA_VIZ_AVAILABLE:
+                            # Use our Bakta visualizations module
+                            try:
+                                # Display the visualizations using the job ID
+                                bakta_visualizations.display_bakta_visualizations(bakta_job_id)
+                            except Exception as e:
+                                st.error(f"Error displaying Bakta visualizations: {str(e)}")
                         
                         elif view_mode == "JSON":
                             # Show as formatted JSON
@@ -931,6 +1003,24 @@ def create_results_tab() -> None:
                                 with col2:
                                     # Placeholder for downloading all result files as a zip
                                     st.button("Download All Files (ZIP)", disabled=True, key="download_bakta_zip_current")
+    
+    # Annotation Tab
+    with annotation_tab:
+        st.write("Detailed annotation information for the current analysis.")
+        
+        # Placeholder content for the annotation tab
+        if "bakta_job_id" in st.session_state and st.session_state.bakta_job_id:
+            st.info(f"Showing annotation details for Bakta job: {st.session_state.bakta_job_id}")
+            st.write("This tab will display detailed annotation information from Bakta.")
+            
+            # Add expandable section for annotation features
+            with st.expander("Annotation Features"):
+                st.write("This section will show detailed feature annotations from the genome.")
+                st.write("- Coding sequences (CDS)")
+                st.write("- RNA genes")
+                st.write("- Repeat regions")
+        else:
+            st.warning("No active annotation job. Please run a Bakta annotation job to view results.")
     
     # Results History Tab
     with history_tab:

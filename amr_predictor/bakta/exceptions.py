@@ -25,6 +25,14 @@ class BaktaAuthenticationError(BaktaApiError):
     """Exception raised for authentication failures with the Bakta API."""
     pass
 
+class BaktaAuthError(BaktaAuthenticationError):
+    """Alias for BaktaAuthenticationError for improved naming consistency."""
+    pass
+
+class BaktaTimeoutError(BaktaApiError):
+    """Exception raised for timeout errors when interacting with the Bakta API."""
+    pass
+
 class BaktaResourceNotFoundError(BaktaApiError):
     """Exception raised when a requested resource is not found in the Bakta API."""
     pass

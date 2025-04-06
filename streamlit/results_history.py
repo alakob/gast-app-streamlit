@@ -17,6 +17,15 @@ from typing import Dict, Any, List, Optional, Tuple
 # Import the column formatting utilities
 from utils import format_column_names, filter_dataframe
 
+# Import job association utilities and Bakta visualizations if available
+try:
+    from job_association import get_associated_bakta_job
+    from bakta_visualizations import display_bakta_visualizations
+    HAS_BAKTA_INTEGRATION = True
+except ImportError:
+    logger.warning("Bakta integration modules not available. Bakta visualizations in history will be disabled.")
+    HAS_BAKTA_INTEGRATION = False
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -89,6 +98,15 @@ def collect_completed_job_files(db_manager=None) -> Tuple[List[Dict[str, Any]], 
     try:
         # Get all jobs with Completed status
         all_jobs = api_client.get_jobs(status="Completed")
+        
+        # Also fetch completed Bakta jobs if possible
+        try:
+            if HAS_BAKTA_INTEGRATION:
+                # This would need a proper Bakta API client implementation
+                # But for now we'll use the association data we already have
+                logger.info("Bakta integration is available - will show associated results")
+        except Exception as e:
+            logger.warning(f"Error fetching Bakta jobs: {str(e)}")
         
         if not isinstance(all_jobs, list):
             logger.error(f"Unexpected response format from API: {type(all_jobs)}")
@@ -201,6 +219,10 @@ def display_consolidated_history(db_manager=None) -> None:
     # Initialize pagination state
     init_pagination_state()
     
+    # Initialize job association state if needed
+    if "job_associations" not in st.session_state:
+        st.session_state.job_associations = {}
+    
     # Collect all completed job data and files
     job_data_list, prediction_files, aggregated_files = collect_completed_job_files()
     
@@ -269,6 +291,59 @@ def display_consolidated_history(db_manager=None) -> None:
     # Display summary statistics if we have aggregated data
     if not all_aggregated.empty:
         display_summary_statistics(all_aggregated)
+        
+        # Add a section for associated Bakta results if available
+        if HAS_BAKTA_INTEGRATION:
+            st.subheader("Associated Genome Annotations")
+            
+            # Check if any jobs have Bakta associations
+            has_bakta_associations = False
+            
+            for job_data in job_data_list:
+                job_id = job_data.get("id") or job_data.get("job_id")
+                if not job_id:
+                    continue
+                    
+                # Check for associated Bakta job
+                bakta_job_id = None
+                
+                # First check session state associations
+                if "job_associations" in st.session_state and job_id in st.session_state.job_associations:
+                    bakta_job_id = st.session_state.job_associations.get(job_id)
+                
+                # If not found in session, try database lookup
+                if not bakta_job_id and HAS_BAKTA_INTEGRATION:
+                    try:
+                        bakta_job_id = get_associated_bakta_job(job_id)
+                        # Store in session for future lookups
+                        if bakta_job_id:
+                            if "job_associations" not in st.session_state:
+                                st.session_state.job_associations = {}
+                            st.session_state.job_associations[job_id] = bakta_job_id
+                    except Exception as e:
+                        logger.warning(f"Error looking up Bakta association for job {job_id}: {str(e)}")
+                
+                # If we found an association, display the Bakta visualization
+                if bakta_job_id:
+                    has_bakta_associations = True
+                    with st.expander(f"Genome Annotation for AMR Job {job_id}", expanded=False):
+                        st.info(f"Associated Bakta Job ID: {bakta_job_id}")
+                        
+                        try:
+                            # Use the visualization component to display Bakta results
+                            display_bakta_visualizations(bakta_job_id)
+                        except Exception as e:
+                            st.error(f"Error displaying Bakta visualization: {str(e)}")
+                            logger.error(f"Error displaying Bakta visualization: {str(e)}", exc_info=True)
+                        
+                        # Add a button to view full Bakta results
+                        if st.button(f"View Full Bakta Results", key=f"view_bakta_{bakta_job_id}"):
+                            st.session_state.bakta_job_id = bakta_job_id
+                            st.session_state.active_tab = 2  # Results tab
+                            st.rerun()
+            
+            if not has_bakta_associations:
+                st.info("No genome annotations are associated with these AMR predictions.")
 
 def display_prediction_table(predictions_df: pd.DataFrame) -> None:
     """

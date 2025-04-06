@@ -1,0 +1,131 @@
+{
+    "genome": {
+        "genus": "Unspecified",
+        "species": "unspecified",
+        "strain": "OXA-264",
+        "taxon": "Unspecified unspecified OXA-264",
+        "complete": false,
+        "gram": "?",
+        "translation_table": 11
+    },
+    "stats": {
+        "size": 828,
+        "gc": 0.41183574879227053,
+        "n_ratio": 0.0,
+        "n50": 828,
+        "n90": 828,
+        "coding_ratio": 1.0
+    },
+    "features": [
+        {
+            "type": "cds",
+            "sequence": "OXA-264",
+            "start": 1,
+            "stop": 828,
+            "strand": "+",
+            "frame": 1,
+            "gene": "blaOXA",
+            "product": "OXA-214 family carbapenem-hydrolyzing class D beta-lactamase",
+            "db_xrefs": [
+                "EC:3.5.2.6",
+                "GO:0008658",
+                "GO:0008800",
+                "KEGG:K19321",
+                "NCBIProtein:WP_005087154.1",
+                "RefSeq:WP_262443575.1",
+                "SO:0001217",
+                "UniParc:UPI0021CDB266",
+                "UniRef:UniRef100_UPI0021CDB266",
+                "UniRef:UniRef50_G9JKW0",
+                "UniRef:UniRef90_G9JKW0"
+            ],
+            "nt": "ATGAAGCTATCAAAATTATACACCCTCACTGTGCTCTTAGGATTTGGATTAAGCGGTGTCGCCTGCCAGCATATCCATACTCCAGTCTTATTCAATCAAATTGAAAACGATCAAACAAAGCAGATCGCTTCCTTGTTTGAGAATGTTCAAACAACAGGTGTTCTAATTACCTTTGATGGACAGGCGTATAAAGCATACGGTAATGATCTGAATCGTGCCAAAACTGCGTATATCCCAGCATCTACTTTCAAAATATTAAATGCTTTGATTGGCATTGAACATGATAAAACTTCACCAAATGAAGTATTTAAGTGGGATGGTCAGAAGCGTGCTTTTGAAAGTTGGGAAAAAGATCTGACTTTAGCTGAAGCCATGCAAGCTTCTGCTGTACCTGTTTATCAAGCGCTTGCCCAGAGAATCGGATTGGATTTGATGGCAAAGGAAGTCAAAAGAGTCGGCTTCGGTAATACACGCATCGGAACACAAGTTGATAACTTCTGGCTCATTGGACCTTTAAAGATCACGCCAATCGAAGAAGCTCAATTTGCTTACAGGCTTGCGAAACAGGAGTTACCATTTACCCCAAAAACACAACAGCAAGTGATTGATATGCTGCTGGTGGATGAAATACGGGGAACTAAAGTTTACGCCAAAAGTGGTTGGGGAATGGATATTACTCCGCAAGTAGGATGGTGGACTGGATGGATTGAAGATCCGAACGGAAAAGTGATCGCTTTTTCTCTCAATATGGAAATGAATCAACCTGCGCATGCAGCTGCACGTAAAGAAGTTGTTTATCAGGCACTTACGCAATTGAAATTGTTGTAA",
+            "aa": "MKLSKLYTLTVLLGFGLSGVACQHIHTPVLFNQIENDQTKQIASLFENVQTTGVLITFDGQAYKAYGNDLNRAKTAYIPASTFKILNALIGIEHDKTSPNEVFKWDGQKRAFESWEKDLTLAEAMQASAVPVYQALAQRIGLDLMAKEVKRVGFGNTRIGTQVDNFWLIGPLKITPIEEAQFAYRLAKQELPFTPKTQQQVIDMLLVDEIRGTKVYAKSGWGMDITPQVGWWTGWIEDPNGKVIAFSLNMEMNQPAHAAARKEVVYQALTQLKLL",
+            "aa_hexdigest": "fbe968bd1d6fb1661471c1d7d69de382",
+            "start_type": "ATG",
+            "rbs_motif": null,
+            "ups": {
+                "uniparc_id": "UPI0021CDB266",
+                "ncbi_nrp_id": "WP_262443575.1",
+                "uniref100_id": "UniRef100_UPI0021CDB266",
+                "db_xrefs": [
+                    "SO:0001217",
+                    "UniParc:UPI0021CDB266",
+                    "RefSeq:WP_262443575.1",
+                    "UniRef:UniRef100_UPI0021CDB266"
+                ]
+            },
+            "ips": {
+                "uniref100_id": "UniRef100_UPI0021CDB266",
+                "uniref90_id": "UniRef90_G9JKW0"
+            },
+            "psc": {
+                "uniref90_id": "UniRef90_G9JKW0",
+                "gene": "blaOXA",
+                "product": "OXA-214 family carbapenem-hydrolyzing class D beta-lactamase",
+                "ec_ids": [
+                    "3.5.2.6"
+                ],
+                "uniref50_id": "UniRef50_G9JKW0",
+                "kegg_orthology_id": "K19321",
+                "go_ids": [
+                    "GO:0008658",
+                    "GO:0008800"
+                ]
+            },
+            "pscc": {
+                "uniref50_id": "UniRef50_G9JKW0",
+                "db_xrefs": [
+                    "SO:0001217",
+                    "UniRef:UniRef50_G9JKW0"
+                ],
+                "product": "Beta-lactamase"
+            },
+            "expert": [
+                {
+                    "type": "amrfinder",
+                    "rank": 95,
+                    "gene": "blaOXA",
+                    "product": "OXA-214 family carbapenem-hydrolyzing class D beta-lactamase",
+                    "method": "BLASTP",
+                    "query_cov": 1.0,
+                    "model_cov": 1.0,
+                    "identity": 0.9926999999999999,
+                    "id": "WP_005087154.1",
+                    "db_xrefs": [
+                        "NCBIProtein:WP_005087154.1"
+                    ]
+                }
+            ],
+            "genes": [
+                "blaOXA"
+            ],
+            "id": "CPNNACGKCM_1",
+            "locus": "OXA264_01"
+        }
+    ],
+    "sequences": [
+        {
+            "id": "OXA-264",
+            "description": "",
+            "nt": "ATGAAGCTATCAAAATTATACACCCTCACTGTGCTCTTAGGATTTGGATTAAGCGGTGTCGCCTGCCAGCATATCCATACTCCAGTCTTATTCAATCAAATTGAAAACGATCAAACAAAGCAGATCGCTTCCTTGTTTGAGAATGTTCAAACAACAGGTGTTCTAATTACCTTTGATGGACAGGCGTATAAAGCATACGGTAATGATCTGAATCGTGCCAAAACTGCGTATATCCCAGCATCTACTTTCAAAATATTAAATGCTTTGATTGGCATTGAACATGATAAAACTTCACCAAATGAAGTATTTAAGTGGGATGGTCAGAAGCGTGCTTTTGAAAGTTGGGAAAAAGATCTGACTTTAGCTGAAGCCATGCAAGCTTCTGCTGTACCTGTTTATCAAGCGCTTGCCCAGAGAATCGGATTGGATTTGATGGCAAAGGAAGTCAAAAGAGTCGGCTTCGGTAATACACGCATCGGAACACAAGTTGATAACTTCTGGCTCATTGGACCTTTAAAGATCACGCCAATCGAAGAAGCTCAATTTGCTTACAGGCTTGCGAAACAGGAGTTACCATTTACCCCAAAAACACAACAGCAAGTGATTGATATGCTGCTGGTGGATGAAATACGGGGAACTAAAGTTTACGCCAAAAGTGGTTGGGGAATGGATATTACTCCGCAAGTAGGATGGTGGACTGGATGGATTGAAGATCCGAACGGAAAAGTGATCGCTTTTTCTCTCAATATGGAAATGAATCAACCTGCGCATGCAGCTGCACGTAAAGAAGTTGTTTATCAGGCACTTACGCAATTGAAATTGTTGTAA",
+            "length": 828,
+            "complete": false,
+            "type": "contig",
+            "topology": "linear",
+            "simple_id": "OXA264_1"
+        }
+    ],
+    "run": {
+        "start": "2025-04-06 10:18:22",
+        "end": "2025-04-06 10:18:27",
+        "duration": "0.10 min"
+    },
+    "version": {
+        "bakta": "1.11.0",
+        "db": {
+            "version": "6.0",
+            "type": "full"
+        }
+    }
+}

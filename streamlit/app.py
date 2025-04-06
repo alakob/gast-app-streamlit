@@ -1,25 +1,59 @@
-"""
-AMR Prediction & Genome Annotation Streamlit App
-"""
-import streamlit as st
-import threading
+"""AMR Prediction & Genome Annotation Streamlit App"""
+
+# Standard imports first (no streamlit imports)
+import os
+import sys
+import json
 import time
 import logging
-from datetime import datetime
 from pathlib import Path
-import os
+
+# Setup paths
+sys.path.append("/app")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('gast-app')
+
+# Import streamlit first, before any st commands
+import streamlit as st
+
+# Import job association utilities
+try:
+    from job_association import associate_jobs, update_session_associations
+    JOB_ASSOCIATION_AVAILABLE = True
+    logger.info("✓ Job association module imported successfully")
+except ImportError as e:
+    JOB_ASSOCIATION_AVAILABLE = False
+    logger.warning(f"Job association module not available: {e}")
+
+# Set page config as the FIRST Streamlit command
+st.set_page_config(
+    page_title="GAST: Genome Analysis & Surveillance Tool",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Import our simple Bakta executor and visualizations
+try:
+    import bakta_executor
+    import bakta_visualizations
+    logger.info("✓ Simple Bakta executor and visualizations imported successfully")
+    BAKTA_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Failed to import Bakta modules: {e}")
+    BAKTA_AVAILABLE = False
+
+# Continue with other imports
+import threading
+import time
+from datetime import datetime
 import tempfile
 import json
 import requests
 # SSE implementation temporarily disabled
 # from sseclient import SSEClient
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger('gast-app')
 
 # Import custom modules
 import sys
@@ -29,12 +63,15 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Add the parent directory to the path to make amr_predictor available if present
+
+# No need for Bakta patches with our simple executor
+logger.info("Using simple Bakta executor instead of complex integration")
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 
 # Now import the modules
 import config
-from api_client import create_amr_client, create_bakta_interface, BAKTA_AVAILABLE
+from api_client import create_amr_client
 # SSE implementation temporarily disabled
 # from sse_client import get_sse_listener
 from ui_components import (
@@ -45,6 +82,24 @@ from ui_components import (
     create_job_management_tab,
     add_job_to_history
 )
+# Import integration UI components with fallback for Docker environment
+try:
+    from integration_ui import display_integrated_analysis_ui
+    INTEGRATION_UI_AVAILABLE = True
+except ImportError:
+    # Create a fallback implementation when module is not available
+    def display_integrated_analysis_ui():
+        st.header("Integrated Analysis")
+        st.info("Integrated analysis module is not available in this environment. Please update your Docker image or ensure the module is installed.")
+        st.markdown("""
+        This module connects Bakta annotation data with AMR prediction results to provide:
+        - Correlation between genomic features and AMR genes
+        - Integrated genome map visualization
+        - Feature-AMR correlation analysis
+        - Detailed feature analysis with AMR implications
+        """)
+    INTEGRATION_UI_AVAILABLE = False
+    logging.warning("integration_ui module not found - using fallback implementation")
 from utils import (
     is_valid_dna_sequence,
     get_sequence_statistics,
@@ -55,15 +110,9 @@ from utils import (
 # Display a warning if Bakta is not available
 BAKTA_WARNING_DISPLAYED = False
 
-# Set page config
+# Page config is already set at the top of the file
 logger.info("Initializing GAST application")
-st.set_page_config(
-    page_title=config.APP_TITLE,
-    page_icon="🧬",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-logger.info("Page config set")
+logger.info("Page config already set")
 
 # Load custom CSS
 def load_css(css_file):
@@ -89,7 +138,8 @@ if "initialized" not in st.session_state:
     st.session_state.submit_clicked = False
     st.session_state.amr_params = {}
     st.session_state.seq_params = {}
-    st.session_state.enable_bakta = False
+    st.session_state.enable_bakta = True  # Default to enabled
+    st.session_state.using_real_bakta_api = True  # Force real API mode
     st.session_state.jobs = []
     st.session_state.active_tab = 0  # Track active tab index (0-based)
     
@@ -132,23 +182,21 @@ def check_api_connectivity():
     
     # Check Bakta API if enabled
     if st.session_state.get("enable_bakta", False):
-        logger.info("Bakta API enabled, checking connectivity")
+        logger.info("Bakta API enabled, checking connectivity with simple executor")
         try:
-            bakta_client = create_bakta_interface()
-            # Check if we're in mock mode based on session state
-            if st.session_state.get("using_real_bakta_api", False):
-                logger.info("Bakta API connected and using real API")
-                st.session_state.update_bakta_status("Connected", "success")
+            # Check if bakta_executor is imported successfully
+            if 'bakta_executor' in sys.modules:
+                bakta_api_url = bakta_executor.BASE_URL
+                logger.info(f"Bakta executor available with API URL: {bakta_api_url}")
+                st.session_state.update_bakta_status("Connected (Direct API)", "success")
+                # Always use real API mode with our executor
+                st.session_state.using_real_bakta_api = True
             else:
-                logger.info("Bakta API in mock mode - NOT affecting AMR API mode")
-                # Explicitly isolate Bakta mock mode from AMR API
-                logger.info("Ensuring Bakta mock mode doesn't affect AMR API mode")
-                st.session_state.update_bakta_status("Mock Mode", "warning")
+                logger.error("Bakta executor module not found")
+                st.session_state.update_bakta_status("Module not loaded", "error")
         except Exception as e:
-            logger.error(f"Bakta API connection failed: {str(e)}")
+            logger.error(f"Bakta API check failed: {str(e)}")
             st.session_state.update_bakta_status(f"Not connected: {str(e)}", "error")
-            # Explicitly prevent Bakta errors from affecting AMR API mode
-            logger.info("Preventing Bakta errors from affecting AMR API mode")
     else:
         logger.info("Bakta API disabled, skipping connectivity check")
         st.session_state.update_bakta_status("Disabled", "info")
@@ -222,36 +270,18 @@ def submit_amr_job(sequence):
 
 def submit_bakta_job(sequence):
     """
-    Submit a sequence for Bakta annotation.
+    Submit a sequence for Bakta annotation using our simple bakta_executor.
     
     Args:
         sequence: DNA sequence string
     """
-    logger.info("Preparing to submit Bakta annotation job")
+    logger.info("Preparing to submit Bakta annotation job using simple executor")
     
     if not st.session_state.get("enable_bakta", False):
         logger.info("Bakta annotation is disabled, skipping submission")
         return None
     
     try:
-        # Create a temporary file for the sequence
-        logger.info("Creating temporary FASTA file for sequence")
-        with tempfile.NamedTemporaryFile(suffix=".fasta", delete=False) as temp:
-            # If sequence is in FASTA format, write as is, otherwise add a header
-            if sequence.strip().startswith(">"):
-                logger.info("Sequence is in FASTA format, using as-is")
-                temp.write(sequence.encode())
-            else:
-                logger.info("Adding FASTA header to sequence")
-                temp.write(f">streamlit_submission\n{sequence}".encode())
-            
-            temp_path = temp.name
-            logger.info(f"Temporary FASTA file created at: {temp_path}")
-        
-        # Create Bakta interface
-        logger.info("Creating Bakta interface")
-        bakta_interface = create_bakta_interface()
-        
         # Prepare configuration
         bakta_config = st.session_state.bakta_params.copy()
         logger.info(f"Bakta parameters prepared: {bakta_config}")
@@ -260,42 +290,45 @@ def submit_bakta_job(sequence):
         job_name = create_unique_job_name()
         logger.info(f"Generated unique job name: {job_name}")
         
-        # Submit job
-        logger.info("Submitting job to Bakta API")
-        job_id = bakta_interface.submit_job(
-            fasta_data=temp_path,
-            job_name=job_name,
-            config_params=bakta_config
-        )
-        logger.info(f"Bakta job submitted successfully, job ID: {job_id}")
+        # Prep sequence content - ensure it's in FASTA format
+        if not sequence.strip().startswith(">"):
+            logger.info("Adding FASTA header to sequence")
+            sequence = f">streamlit_submission\n{sequence}"
+        else:
+            logger.info("Sequence is already in FASTA format, using as-is")
         
-        # Clean up the temporary file
-        if os.path.exists(temp_path):
-            logger.info(f"Removing temporary FASTA file: {temp_path}")
-            os.unlink(temp_path)
+        # Set output directory to match AMR API results location
+        output_dir = os.path.join(os.environ.get("BAKTA_RESULTS_DIR", "/app/results/bakta"))
+        logger.info(f"Using output directory: {output_dir}")
+        
+        # Submit job using our simple executor
+        logger.info("Submitting job to Bakta API via simple executor")
+        job_id, secret, status_data = bakta_executor.submit_bakta_analysis(
+            fasta_content=sequence,
+            job_name=job_name,
+            output_dir=output_dir
+        )
+        
+        logger.info(f"Bakta job submitted successfully, job ID: {job_id}, secret: {secret}")
         
         # Store job info in session state
         st.session_state.bakta_job_id = job_id
-        st.session_state.bakta_status = "PENDING"
-        logger.info(f"Bakta job ID {job_id} stored in session state with status: PENDING")
+        st.session_state.bakta_job_secret = secret
+        st.session_state.bakta_status = "COMPLETED"  # Our executor waits for completion
+        logger.info(f"Bakta job ID {job_id} stored in session state with status: COMPLETED")
         
         # Add to job history
         job_data = {
             "job_id": job_id,
             "type": "Bakta Annotation",
-            "status": "PENDING",
+            "status": "COMPLETED",
             "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "params": bakta_config
+            "params": bakta_config,
+            "secret": secret,
+            "results_dir": output_dir
         }
         logger.info(f"Adding Bakta job to history: {job_id}")
         add_job_to_history(job_data)
-        
-        # SSE implementation temporarily disabled
-        # if job_id:
-        #     logger.info(f"Starting SSE listener for Bakta job: {job_id}")
-        #     sse_listener = get_sse_listener(config.AMR_API_URL)
-        #     sse_listener.start_listening(job_id)
-        #     logger.info("SSE listener started successfully")
         
         return job_id
     
@@ -303,11 +336,6 @@ def submit_bakta_job(sequence):
         logger.error(f"Error submitting Bakta job: {str(e)}", exc_info=True)
         st.session_state.bakta_error = str(e)
         return None
-    finally:
-        # Ensure temp file is removed
-        if 'temp_path' in locals() and os.path.exists(temp_path):
-            logger.info(f"Cleaning up temporary file in finally block: {temp_path}")
-            os.unlink(temp_path)
 
 def check_job_status():
     """Check the status of submitted jobs."""
@@ -497,10 +525,25 @@ def _legacy_check_bakta_status(bakta_job_id):
     """Legacy method to check Bakta job status via polling (fallback)."""
     logger.info(f"Using legacy polling to check Bakta job status for: {bakta_job_id}")
     try:
-        logger.info("Creating Bakta API interface for status check")
-        bakta_interface = create_bakta_interface()
-        logger.info(f"Requesting status for Bakta job: {bakta_job_id}")
-        status = bakta_interface.get_job_status(bakta_job_id)
+        # Get the job secret from session state (required for bakta_executor)
+        job_secret = st.session_state.get("bakta_job_secret", "")
+        
+        if not job_secret:
+            logger.warning("No Bakta job secret found in session state, cannot check status")
+            return "UNKNOWN"
+            
+        logger.info(f"Using bakta_executor to check status for: {bakta_job_id}")
+        
+        # Use the bakta_executor module directly instead of bakta_interface
+        status_data = bakta_executor.check_job_status(bakta_job_id, job_secret)
+        
+        # Extract the job status from the response
+        if not status_data or 'jobs' not in status_data or not status_data['jobs']:
+            logger.warning(f"Invalid status data received from Bakta API: {status_data}")
+            return "UNKNOWN"
+            
+        # Get status from the first job in the jobs array
+        status = status_data['jobs'][0].get('jobStatus', 'UNKNOWN')
         
         previous_status = st.session_state.get("bakta_status", "UNKNOWN")
         if status != previous_status:
@@ -520,18 +563,20 @@ def _legacy_check_bakta_status(bakta_job_id):
             logger.info(f"Bakta job {bakta_job_id} completed successfully, fetching results")
             if "bakta_results" not in st.session_state:
                 logger.info("Requesting Bakta annotation results")
-                results = bakta_interface.get_job_results(bakta_job_id)
+                # Use bakta_executor to get results instead of interface
+                results = bakta_executor.get_job_results(bakta_job_id, job_secret)
                 logger.info("Bakta results received and stored in session state")
                 st.session_state.bakta_results = results
         elif status == "FAILED":
             logger.error(f"Bakta job {bakta_job_id} failed")
         elif status == "CANCELLED":
             logger.warning(f"Bakta job {bakta_job_id} was cancelled")
+        
+        return status
     except Exception as e:
         logger.error(f"Error checking Bakta job status: {str(e)}", exc_info=True)
         st.session_state.bakta_error = str(e)
-    else:
-        logger.info("No Bakta job ID in session state, skipping Bakta status check")
+        return "ERROR"
         
     logger.info("Job status check completed")
 
@@ -595,6 +640,23 @@ def process_submission():
                 }
                 add_job_to_history(bakta_job_data)
                 
+                # Associate the AMR and Bakta jobs if both were successful
+                if amr_job_id and JOB_ASSOCIATION_AVAILABLE:
+                    logger.info(f"Associating AMR job {amr_job_id} with Bakta job {bakta_job_id}")
+                    try:
+                        # Update database association
+                        associate_jobs(amr_job_id, bakta_job_id)
+                        
+                        # Update session state for quick lookup
+                        if "job_associations" not in st.session_state:
+                            st.session_state.job_associations = {}
+                        st.session_state.job_associations[amr_job_id] = bakta_job_id
+                        st.session_state.job_associations[bakta_job_id] = amr_job_id
+                        
+                        logger.info(f"Successfully associated AMR job {amr_job_id} with Bakta job {bakta_job_id}")
+                    except Exception as e:
+                        logger.error(f"Error associating jobs: {str(e)}")
+                
                 st.success(f"Bakta annotation job submitted (ID: {bakta_job_id})")
             else:
                 logger.error("Bakta job submission failed, no job ID returned")
@@ -651,6 +713,13 @@ st.markdown("""
 logger.info("Setting up main tab structure")
 tabs = ["Annotation Settings", "Sequence Input", "Results", "Job Management"]
 
+# Only add the Integrated Analysis tab if the module is available
+if INTEGRATION_UI_AVAILABLE:
+    tabs.append("Integrated Analysis")
+    logger.info("Integrated Analysis tab added to UI")
+else:
+    logger.warning("Integrated Analysis tab not available - module not found")
+
 # Get active tab from session state (default to 0 if not set)
 active_tab_index = st.session_state.get("active_tab", 0)
 logger.info(f"Active tab index from session state: {active_tab_index}")
@@ -660,7 +729,12 @@ tab_list = st.tabs(tabs)
 logger.info(f"Created {len(tab_list)} tabs: {tabs}")
 
 # For backwards compatibility with existing code
-tab1, tab2, tab3, tab4 = tab_list
+if len(tab_list) >= 5:
+    tab1, tab2, tab3, tab4, tab5 = tab_list
+else:
+    tab1, tab2, tab3, tab4 = tab_list
+    # Create a dummy tab5 that won't be used
+    tab5 = None
 
 # This is a workaround for Streamlit's lack of a direct API to programmatically
 # select a tab. We use the tab container's existing CSS classes to select the active tab.
@@ -703,8 +777,10 @@ with tab2:
         st.session_state.submit_clicked = False
         # Switch to Results tab (index 2)
         st.session_state.active_tab = 2
-        # Force immediate check of job status with real API
+        # Set flags to auto-refresh both AMR and Bakta status
         st.session_state.force_status_check = True
+        st.session_state.auto_refresh_amr = True
+        st.session_state.auto_refresh_bakta = True
         st.rerun()  # Rerun the app to activate the selected tab
 
 with tab3:
@@ -743,6 +819,12 @@ with tab3:
 
 with tab4:
     create_job_management_tab()
+
+# Integrated Analysis tab (only render if the tab exists)
+if tab5 is not None:
+    with tab5:
+        logger.info("Rendering Integrated Analysis tab")
+        display_integrated_analysis_ui()
 
 # Revert to traditional polling for running jobs
 if "amr_job_id" in st.session_state or "bakta_job_id" in st.session_state:

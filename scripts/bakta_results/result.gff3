@@ -1,0 +1,12 @@
+##gff-version 3
+##feature-ontology https://github.com/The-Sequence-Ontology/SO-Ontologies/blob/v3.1/so.obo
+# organism Unspecified unspecified OXA-264
+# Annotated with Bakta
+# Software: v1.11.0
+# Database: v6.0, full
+# DOI: 10.1099/mgen.0.000685
+# URL: github.com/oschwengers/bakta
+##sequence-region OXA-264 1 828
+OXA-264	Bakta	region	1	828	.	+	.	ID=OXA-264;Name=OXA-264
+OXA-264	Pyrodigal	gene	1	828	.	+	.	ID=OXA264_01_gene;locus_tag=OXA264_01;gene=blaOXA
+OXA-264	Pyrodigal	CDS	1	828	.	+	0	ID=OXA264_01;Name=OXA-214 family carbapenem-hydrolyzing class D beta-lactamase;locus_tag=OXA264_01;product=OXA-214 family carbapenem-hydrolyzing class D beta-lactamase;Dbxref=GO:0008658,GO:0008800;gene=blaOXA;Parent=OXA264_01_gene;inference=ab initio prediction:Pyrodigal:3.5;Note=KEGG:K19321,NCBIProtein:WP_005087154.1,RefSeq:WP_262443575.1,SO:0001217,UniParc:UPI0021CDB266,UniRef:UniRef100_UPI0021CDB266,UniRef:UniRef50_G9JKW0,UniRef:UniRef90_G9JKW0;ec_number=3.5.2.6

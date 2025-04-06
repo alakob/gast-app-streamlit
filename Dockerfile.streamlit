@@ -16,12 +16,18 @@ COPY requirements.txt .
 # Create a dedicated Streamlit requirements file if it doesn't exist
 RUN echo "streamlit>=1.22.0" > streamlit_requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir -r streamlit_requirements.txt
-
-# Copy application code
+# Copy application code first to ensure amr_predictor is available for installation
 COPY . .
+
+# Install Python dependencies and the local amr_predictor package
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -r streamlit_requirements.txt \
+    && pip install -e . \
+    && python -c "import sys; print('Python packages installed successfully.')"  \
+    && python -m pip list | grep amr_predictor \
+    && python -c "import amr_predictor; print('Verified main package import: ' + amr_predictor.__name__)" \
+    && python -c "try: \n  import amr_predictor.bakta; \n  print('✓ Bakta module imported successfully: ' + amr_predictor.bakta.__name__); \nexcept ImportError as e: \n  print('✗ Bakta module import failed: ' + str(e)); \n  exit(1)" \
+    && mkdir -p /app/results/bakta
 
 # Set environment variables
 ENV PYTHONPATH=/app
@@ -36,5 +42,13 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
-# Command to run Streamlit
-CMD ["streamlit", "run", "streamlit/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Create startup script that verifies Bakta module installation before starting Streamlit
+RUN echo '#!/bin/bash\n\
+echo "Running Bakta module verification..."\n\
+python /app/install_bakta_module.py\n\
+echo "Starting Streamlit server..."\n\
+exec streamlit run streamlit/app.py --server.port=8501 --server.address=0.0.0.0' > /app/start.sh \
+    && chmod +x /app/start.sh
+
+# Command to run startup script
+CMD ["/app/start.sh"]

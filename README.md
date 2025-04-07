@@ -3,6 +3,8 @@
 ## Overview
 The AMR Predictor is a bioinformatics tool that leverages fine-tuned nucleotide transformer models to predict antimicrobial resistance (AMR) from genomic sequences. It combines state-of-the-art deep learning with practical bioinformatics workflows.
 
+![GAST Predictor Web Interface](webinterface.png)
+
 ## Key Features
 - **Nucleotide Transformer Integration**: Uses fine-tuned transformer models (default: [DraGNOME-2.5b-v1](https://huggingface.co/alakob/DraGNOME-2.5b-v1)) for sequence analysis
 - **Bakta Integration**: Automated genome annotation through Bakta API

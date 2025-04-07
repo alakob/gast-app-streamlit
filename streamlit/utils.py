@@ -7,6 +7,10 @@ import json
 from typing import Dict, Any, Tuple, List, Optional
 from pathlib import Path
 import io
+import streamlit as st
+import pandas as pd
+import numpy as np
+from math import ceil
 
 def is_valid_dna_sequence(sequence: str) -> bool:
     """
@@ -153,16 +157,20 @@ def format_job_status(status: str) -> Tuple[str, str]:
     Returns:
         Tuple of (formatted status, status color)
     """
+    # Normalize status to lowercase for comparison
+    status = status.lower() if status else "unknown"
+    
     status_map = {
-        "PENDING": ("Pending", "blue"),
-        "RUNNING": ("Running", "orange"),
-        "SUCCESSFUL": ("Complete", "green"),
-        "FAILED": ("Failed", "red"),
-        "CANCELLED": ("Cancelled", "gray")
+        "pending": ("Pending", "blue"),
+        "running": ("Running", "orange"),
+        "completed": ("Complete", "green"),
+        "successful": ("Complete", "green"),
+        "failed": ("Failed", "red"),
+        "cancelled": ("Cancelled", "gray"),
+        "unknown": ("Unknown", "gray")
     }
     
-    default = ("Unknown", "gray")
-    return status_map.get(status, default)
+    return status_map.get(status, ("Unknown", "gray"))
 
 def format_results_for_display(results: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -273,11 +281,6 @@ def filter_dataframe(df):
     Returns:
         Filtered dataframe
     """
-    import streamlit as st
-    import pandas as pd
-    import numpy as np
-    from datetime import datetime
-    
     # Make a copy of the dataframe to avoid modifying the original
     df = df.copy()
     
@@ -290,9 +293,6 @@ def filter_dataframe(df):
     
     # Create a filter section using an expander
     with st.expander("Filter Data"):
-        # Add a "Select all" checkbox for each column type
-        filter_container = st.container()
-        
         # Split the filters into columns for better UI layout
         filter_columns = st.columns(3)
         column_index = 0
@@ -302,6 +302,16 @@ def filter_dataframe(df):
         numeric_cols = list(df.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns)
         date_cols = list(df.select_dtypes(include=['datetime64', 'datetime64[ns, UTC]']).columns)
         bool_cols = list(df.select_dtypes(include=['bool']).columns)
+        
+        # Special handling for resistance-related columns that should be categorical
+        resistance_keywords = ['resistance', 'classification', 'vote', 'prediction']
+        for col in numeric_cols[:]:  # Create a copy of the list to modify during iteration
+            if any(keyword in col.lower() for keyword in resistance_keywords):
+                numeric_cols.remove(col)
+                if col not in categorical_cols:
+                    categorical_cols.append(col)
+                    # Convert to categorical if it's a resistance-related column
+                    df[col] = df[col].astype(str)
         
         # Add a filter UI element for each column based on its type
         for column in df.columns:
@@ -313,11 +323,11 @@ def filter_dataframe(df):
             if column in categorical_cols:
                 with current_column:
                     # Get all unique values in the column
-                    unique_values = df[column].dropna().unique()
+                    unique_values = sorted(df[column].dropna().unique())
                     # Create a multiselect widget
                     selected_values = st.multiselect(
                         f"Filter by {column}",
-                        options=sorted(unique_values),
+                        options=unique_values,
                         default=None,
                         key=f"filter_{column}"
                     )
@@ -332,7 +342,7 @@ def filter_dataframe(df):
                     min_value = float(df[column].min())
                     max_value = float(df[column].max())
                     
-                    # Handle case where min and max are identical (slider requires different values)
+                    # Handle case where min and max are identical
                     if min_value == max_value:
                         st.info(f"All values in '{column}' are identical: {min_value}")
                     else:
@@ -371,7 +381,6 @@ def filter_dataframe(df):
                         # Convert date inputs to datetime for comparison
                         if start_date and end_date:
                             # Apply filter based on dates
-                            # Convert dates to pandas datetime for consistent comparison
                             start_datetime = pd.to_datetime(start_date)
                             end_datetime = pd.to_datetime(end_date)
                             # Add a day to end date to make it inclusive
@@ -388,3 +397,192 @@ def filter_dataframe(df):
                         df = df[df[column] == True]
     
     return df
+
+def enhanced_filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enhanced dataframe filtering with smart column type detection and appropriate filter widgets.
+    All filters are contained within a collapsible accordion for clean UI.
+    
+    Args:
+        df: Input DataFrame to filter
+        
+    Returns:
+        Filtered DataFrame
+    """
+    # Create a copy to avoid modifying the original
+    df = df.copy()
+    
+    # Initialize filter state if not exists
+    if "active_filters" not in st.session_state:
+        st.session_state.active_filters = {}
+    
+    # Create accordion for filters
+    with st.expander("🔍 Filter Results", expanded=False):
+        # Display filter summary and reset button in a single row
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            active_filter_count = len(st.session_state.active_filters)
+            if active_filter_count > 0:
+                st.info(f"Active filters: {active_filter_count}")
+        with col2:
+            if st.button("Reset All Filters"):
+                st.session_state.active_filters = {}
+                st.rerun()
+        
+        # Categorize columns by type
+        categorical_cols = []
+        numeric_cols = []
+        date_cols = []
+        text_cols = []
+        
+        for col in df.columns:
+            # Skip columns that are already being filtered
+            if col in st.session_state.active_filters:
+                continue
+                
+            # Check column type
+            if pd.api.types.is_numeric_dtype(df[col]):
+                numeric_cols.append(col)
+            elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                date_cols.append(col)
+            elif pd.api.types.is_categorical_dtype(df[col]) or df[col].nunique() < 10:
+                categorical_cols.append(col)
+            else:
+                text_cols.append(col)
+        
+        # Create two columns for filters
+        left_col, right_col = st.columns(2)
+        
+        # Left column - Categorical filters
+        with left_col:
+            if categorical_cols:
+                st.subheader("Categorical Filters")
+                for col in categorical_cols:
+                    unique_values = sorted(df[col].unique())
+                    selected_values = st.multiselect(
+                        f"Filter by {col}",
+                        options=unique_values,
+                        default=[],
+                        key=f"cat_filter_{col}"
+                    )
+                    if selected_values:
+                        st.session_state.active_filters[col] = {
+                            "type": "categorical",
+                            "values": selected_values
+                        }
+        
+        # Right column - Numeric filters
+        with right_col:
+            if numeric_cols:
+                st.subheader("Numeric Filters")
+                for col in numeric_cols:
+                    create_numeric_filter(col, df, st)
+        
+        # Date and text filters span both columns
+        if date_cols:
+            st.subheader("Date Filters")
+            for col in date_cols:
+                col1, col2 = st.columns(2)
+                with col1:
+                    min_date = df[col].min().date()
+                    max_date = df[col].max().date()
+                    date_range = st.date_input(
+                        f"Date range for {col}",
+                        value=(min_date, max_date),
+                        key=f"date_filter_{col}"
+                    )
+                    if len(date_range) == 2 and (date_range[0] != min_date or date_range[1] != max_date):
+                        st.session_state.active_filters[col] = {
+                            "type": "date",
+                            "range": date_range
+                        }
+        
+        if text_cols:
+            st.subheader("Text Filters")
+            for col in text_cols:
+                search_term = st.text_input(
+                    f"Search in {col}",
+                    key=f"text_filter_{col}"
+                )
+                if search_term:
+                    st.session_state.active_filters[col] = {
+                        "type": "text",
+                        "term": search_term
+                    }
+    
+    # Apply filters
+    filtered_df = df.copy()
+    for col, filter_info in st.session_state.active_filters.items():
+        if filter_info["type"] == "categorical":
+            filtered_df = filtered_df[filtered_df[col].isin(filter_info["values"])]
+        elif filter_info["type"] == "numeric":
+            min_val = filter_info["min"]
+            max_val = filter_info["max"]
+            filtered_df = filtered_df[(filtered_df[col] >= min_val) & (filtered_df[col] <= max_val)]
+        elif filter_info["type"] == "date":
+            start_date, end_date = filter_info["range"]
+            start_dt = pd.to_datetime(start_date)
+            end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+            filtered_df = filtered_df[(filtered_df[col] >= start_dt) & (filtered_df[col] <= end_dt)]
+        elif filter_info["type"] == "text":
+            search_term = filter_info["term"]
+            filtered_df = filtered_df[filtered_df[col].astype(str).str.contains(search_term, case=False, na=False)]
+    
+    # Show filter summary
+    if len(st.session_state.active_filters) > 0:
+        st.info(f"Showing {len(filtered_df)} of {len(df)} records (filtered)")
+    
+    return filtered_df
+
+def create_numeric_filter(col, df, st):
+    """Create a numeric filter for a given column.
+    
+    Args:
+        col: Column name to filter
+        df: DataFrame containing the data
+        st: Streamlit module instance
+    """
+    min_val = float(df[col].min())
+    max_val = float(df[col].max())
+    
+    # Always start from 0
+    display_min = 0
+    
+    # Set display max and step size based on the actual max value
+    if max_val <= 1:
+        display_max = 1
+        step = 0.01
+    elif max_val < 10:
+        display_max = 10
+        step = 0.1
+    elif max_val < 100:
+        display_max = ceil_to_nearest(max_val, 10)  # Round up to nearest 10
+        step = 1
+    elif max_val < 1000:
+        display_max = ceil_to_nearest(max_val, 100)  # Round up to nearest 100
+        step = 10
+    else:
+        display_max = ceil_to_nearest(max_val, 1000)  # Round up to nearest 1000
+        step = 100
+    
+    # Create a slider for the range
+    value_range = st.slider(
+        f"Filter by {col}",
+        min_value=float(display_min),
+        max_value=float(display_max),
+        value=(float(min_val), float(max_val)),
+        step=float(step),
+        key=f"numeric_filter_{col}"
+    )
+    
+    # Store filter in session state if changed from default range
+    if value_range != (min_val, max_val):
+        st.session_state.active_filters[col] = {
+            "type": "numeric",
+            "min": value_range[0],
+            "max": value_range[1]
+        }
+
+def ceil_to_nearest(value, base):
+    """Round up to the nearest multiple of base."""
+    return base * ((value + base - 1) // base)

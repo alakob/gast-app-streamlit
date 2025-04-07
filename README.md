@@ -1,35 +1,186 @@
-# GAST - Genomic Antimicrobial Susceptibility Testing
+# AMR Predictor - Antimicrobial Resistance Prediction Tool
 
-Advanced machine learning platform for predicting antimicrobial resistance from bacterial genome sequences.
+## Overview
+The AMR Predictor is a bioinformatics tool that leverages fine-tuned nucleotide transformer models to predict antimicrobial resistance (AMR) from genomic sequences. It combines state-of-the-art deep learning with practical bioinformatics workflows.
 
-## Core Functionality
+## Key Features
+- **Nucleotide Transformer Integration**: Uses fine-tuned transformer models (default: [DraGNOME-2.5b-v1](https://huggingface.co/alakob/DraGNOME-2.5b-v1)) for sequence analysis
+- **Bakta Integration**: Automated genome annotation through Bakta API
+- **Sequence Processing**: Handles long sequences through intelligent segmentation
+- **Multi-Environment Support**: Separate configurations for dev, test, and prod environments
+- **Streamlit Interface**: User-friendly web interface for analysis
+- **REST API**: Programmatic access to prediction capabilities
 
-### Sequence Analysis
-- **Sequence Input**: Upload FASTA files for analysis or use sample data
-- **Annotation Settings**: Configure sequence segmentation and processing parameters
+## Technical Stack
+- **Backend**: Python/FastAPI
+- **Frontend**: Streamlit
+- **Database**: PostgreSQL
+- **Model**: Fine-tuned Nucleotide Transformer
+- **Containerization**: Docker/Docker Compose
 
-### AMR Prediction
-- **ML Models**: Utilizes state-of-the-art models (DraGNOME-50m, DraGNOME-2.5b)
-- **Resistance Prediction**: Predicts resistance/susceptibility for multiple antimicrobials
-- **Sequence Aggregation**: Consolidates predictions across sequence segments
+## Architecture Overview
 
-### Results & Visualization
-- **Current Analysis**: View real-time AMR predictions with interactive tables
-- **Results History**: Browse historical predictions with filtering and pagination
-- **Summary Statistics**: View aggregated resistance statistics across sequences
+The application follows a containerized, API-driven architecture with distinct frontend and backend components.
 
-### Job Management
-- **Status Monitoring**: Track job progress in real-time
-- **API Integration**: Seamless communication with AMR prediction API
-- **Docker-based**: Containerized for consistent execution environments
+```mermaid
+graph TD
+    subgraph User Interaction
+        User[<fa:fa-user> User]
+    end
 
-## Technical Architecture
+    subgraph Frontend (Streamlit)
+        direction LR
+        UI[<fa:fa-desktop> Streamlit UI (app.py)]
+        Utils[<fa:fa-cogs> Streamlit Utils (utils.py)]
+        State[<fa:fa-database> Session State]
 
-- **Frontend**: Streamlit-based interactive UI
-- **Backend**: FastAPI for high-performance prediction API
-- **Database**: PostgreSQL for job and result persistence
-- **Docker**: Multi-container deployment with shared volumes
+        UI -- Manages --> State
+        UI -- Uses --> Utils
+        Utils -- Updates --> State
+    end
+
+    subgraph Backend (FastAPI)
+        direction LR
+        API[<fa:fa-server> AMR FastAPI (main.py, routers/)]
+        AMRModel[<fa:fa-brain> AMR Prediction Model]
+        BaktaClient[<fa:fa-plug> Bakta Client/Executor]
+        DBClient[<fa:fa-database> Database Client (SQLAlchemy, asyncpg)]
+        Auth[<fa:fa-shield-alt> Auth (Potential)]
+
+        API -- Uses --> DBClient
+        API -- Runs --> AMRModel
+        API -- Communicates via --> BaktaClient
+        API -- Potentially Uses --> Auth
+    end
+
+    subgraph Database (PostgreSQL)
+        DB[<fa:fa-database> PostgreSQL Database (amr_predictor_dev)]
+        SchemaInit[<fa:fa-file-code> Schema Init Scripts (e.g., 02a-create-bakta-schema.sql)]
+    end
+
+    subgraph External Services
+        BaktaSvc[<fa:fa-cloud> Bakta Service/API]
+    end
+
+    subgraph Infrastructure & Deployment (Docker)
+        direction TB
+        BuildScript[<fa:fa-terminal> build_container.sh] -- Manages --> DockerEnv
+        subgraph Docker Environment
+            direction LR
+            StContainer[<fa:fa-docker> Streamlit Container]
+            ApiContainer[<fa:fa-docker> API Container]
+            DbContainer[<fa:fa-docker> DB Container]
+            PgAdmin[<fa:fa-docker> pgAdmin Container]
+        end
+        DockerVolumes[<fa:fa-hdd> Docker Volumes (e.g., DB Data, Results)]
+
+        BuildScript -- Initializes --> DbContainer
+        SchemaInit -- Used by --> BuildScript
+        DbContainer -- Uses --> DockerVolumes
+        PgAdmin -- Accesses --> DbContainer
+        StContainer -- Runs --> UI
+        ApiContainer -- Runs --> API
+    end
+
+    subgraph Logging & Monitoring
+        Logging[<fa:fa-clipboard-list> Logging (Python Logger)]
+    end
+
+    %% Interactions & Data Flow
+    User -- Interacts (Input Sequence, Settings) --> UI
+    UI -- Submits Job Request (FASTA, Params) --> API
+    UI -- Polls for Status (Job ID) --> API
+    UI -- Fetches Results (Job ID) --> API
+    API -- Returns Status/Results --> UI
+
+    API -- Stores/Retrieves Job Info (Job ID, Status, Params, Sequence) --> DBClient
+    API -- Stores/Retrieves Results (Predictions, Annotations) --> DBClient
+    DBClient -- Interacts --> DB
+
+    API -- Sends Sequence --> AMRModel
+    AMRModel -- Returns Predictions --> API
+
+    API -- Submits Bakta Job (Sequence, Config, Secret) --> BaktaClient
+    BaktaClient -- Interacts --> BaktaSvc
+    BaktaSvc -- Returns Job ID/Status/Results --> BaktaClient
+    BaktaClient -- Relays Status/Results --> API
+
+    Auth -- Secures? --> API
+    UI -- Auth Request? --> Auth
+
+    UI -- Logs Events --> Logging
+    API -- Logs Events --> Logging
+
+    %% Styling (Optional)
+    classDef frontend fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef backend fill:#ccf,stroke:#333,stroke-width:2px;
+    classDef database fill:#cfc,stroke:#333,stroke-width:2px;
+    classDef external fill:#fca,stroke:#333,stroke-width:2px;
+    classDef infra fill:#eee,stroke:#333,stroke-width:2px;
+    classDef user fill:#add,stroke:#333,stroke-width:2px;
+    classDef logging fill:#fff,stroke:#999,stroke-width:1px,stroke-dasharray: 5 5;
+
+    class User user;
+    class UI,Utils,State frontend;
+    class API,AMRModel,BaktaClient,DBClient,Auth backend;
+    class DB,SchemaInit database;
+    class BaktaSvc external;
+    class BuildScript,StContainer,ApiContainer,DbContainer,PgAdmin,DockerVolumes infra;
+    class Logging logging;
+```
+
+For a detailed explanation of each component and their interactions, please see the [Architecture Explanation](./docs/architecture_explanation.md) document.
+
+## Models
+The application uses fine-tuned nucleotide transformer models available on Hugging Face:
+
+- **Primary Model**: [DraGNOME-2.5b-v1](https://huggingface.co/alakob/DraGNOME-2.5b-v1)
+  - 2.5 billion parameter model
+  - Fine-tuned for AMR prediction
+  - Optimized for genomic sequence analysis
+
+- **Alternative Models**:
+  - [DraPLASMID-2.5b-v1](https://huggingface.co/alakob/DraPLASMID-2.5b-v1) - Specialized for plasmid analysis
+  - [DraGNOME-50m-v2](https://huggingface.co/alakob/DraGNOME-50m-v2) - Lightweight version for faster inference
+
+## Database Schema
+The application uses tables for storing AMR job details, Bakta annotation data, user information, and related metadata. Key tables include `amr_jobs`, `bakta_jobs`, `amr_job_parameters`, `bakta_annotations`, and `users`. See the initialization scripts in `docker/postgres/init/` for full details.
+
+## Setup and Installation
+1. Clone the repository
+2. Configure environment variables in `.env` (if necessary)
+3. Run `./build_container.sh` to build and start all services (this handles dependencies and initialization order).
+
+### Container Management
+The application provides a primary script for container management:
+
+- `build_container.sh`: Stops existing services, cleans up volumes, rebuilds all containers, starts them in the correct order (PostgreSQL first), verifies the database schema, and tails the logs. Use this script for a full environment rebuild.
+  ```bash
+  ./build_container.sh
+  ```
+
+## Usage
+- **Web Interface**: Access the Streamlit interface at `http://localhost:8501`
+- **API**: Use the REST API at `http://localhost:8000` (Explore endpoints via `http://localhost:8000/docs`)
 
 ## Development
+- **Environment Management**: Use `build_container.sh` for a clean development environment setup.
+- **Database Schema**: Modify scripts in `docker/postgres/init/` and run `build_container.sh` to apply changes.
+- **Testing**: Ensure tests cover interactions between components as outlined in the architecture.
 
-See [Docker Development Guide](docs/10_docker_development.md) for setup and contribution instructions.
+## Performance Considerations
+- Batch processing for large sequences is handled via the API/backend logic.
+- GPU acceleration for the model can be configured in the environment.
+- Sequence segmentation logic exists for handling long genomes effectively.
+- Caching strategies might be employed in the API or database layers for optimization.
+
+## Contributing
+1. Follow the development guidelines in the repository.
+2. Use the provided Docker setup via `build_container.sh` for consistency.
+3. Ensure changes align with the established architecture and data flow.
+
+## License
+[Specify license information]
+
+## Support
+[Add support contact information]

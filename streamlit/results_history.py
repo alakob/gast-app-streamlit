@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
 # Import the column formatting utilities
-from utils import format_column_names, filter_dataframe
+from utils import format_column_names, filter_dataframe, enhanced_filter_dataframe
 
 # Import job association utilities and Bakta visualizations if available
 try:
@@ -407,7 +407,7 @@ def display_prediction_table(predictions_df: pd.DataFrame) -> None:
 
 def display_aggregated_table(aggregated_df: pd.DataFrame) -> None:
     """
-    Display the consolidated sequence-level aggregated table with pagination and filtering.
+    Display the consolidated sequence-level aggregated table with pagination and enhanced filtering.
     
     Args:
         aggregated_df: DataFrame containing all aggregated data
@@ -417,16 +417,8 @@ def display_aggregated_table(aggregated_df: pd.DataFrame) -> None:
     # Format column names to Title Case before filtering (for better UI)
     aggregated_df = format_column_names(aggregated_df)
     
-    # Apply the dataframe filtering UI - this creates expandable filter controls
-    filtered_df = filter_dataframe(aggregated_df)
-    
-    # Show the total number of rows before and after filtering
-    col_stats1, col_stats2 = st.columns(2)
-    with col_stats1:
-        st.write(f"Total records: {len(aggregated_df)}")
-    with col_stats2:
-        if len(filtered_df) < len(aggregated_df):
-            st.write(f"Filtered records: {len(filtered_df)}")
+    # Apply the enhanced dataframe filtering UI
+    filtered_df = enhanced_filter_dataframe(aggregated_df)
     
     # Get total number of rows and calculate total pages based on filtered data
     total_rows = len(filtered_df)

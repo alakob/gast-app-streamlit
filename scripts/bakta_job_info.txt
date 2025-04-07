@@ -1,4 +1,0 @@
-Job ID: c4d3d6f5-be5c-47fb-80f9-f36855c85328
-Secret: JpsmjI4fHf7EUsJl9VfjBvnPZYnhF3Hm
-URL: https://bakta.computational.bio/annotation/c4d3d6f5-be5c-47fb-80f9-f36855c85328?secret=JpsmjI4fHf7EUsJl9VfjBvnPZYnhF3Hm
-Final Status: SUCCESSFUL

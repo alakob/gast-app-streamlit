@@ -1,2 +1,0 @@
-sequence_id,segment_count,start,end,any_resistance,any_resistance_count,majority_vote,majority_vote_count,avg_resistance_prob,avg_susceptible_prob,avg_classification
-OXA-264:27215228mrsa_S13_L001_R1_001_(paired)_contig_1_segment,3,1,828,Resistant,3,Resistant,3,0.9711862603823344,0.0288137104362249,Resistant

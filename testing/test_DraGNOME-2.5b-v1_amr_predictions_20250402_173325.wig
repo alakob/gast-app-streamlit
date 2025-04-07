@@ -1,5 +1,0 @@
-track type=wiggle_0 name='AMR Resistance Probability'
-fixedStep chrom=OXA-264:27215228mrsa_S13_L001_R1_001_(paired)_contig_1 start=1 step=1200 span=1200
-0.9754009246826172
-0.9629144072532654
-0.9752434492111206

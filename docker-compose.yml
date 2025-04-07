@@ -63,7 +63,7 @@ services:
       - PG_DATABASE_TEST=amr_predictor_test
       - PG_DATABASE_PROD=amr_predictor_prod
     volumes:
-      - ./results:/app/results
+      - result_data:/app/results
     ports:
       - "8000:8000"
     depends_on:

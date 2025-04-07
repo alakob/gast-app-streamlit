@@ -1,3 +1,0 @@
-Job ID: 74b7a306-319c-4d70-8030-9cb94b97a460
-Secret: X00ypQ2rTQr5mF367oDtDqXzYvPi0Fti
-URL: https://bakta.computational.bio/annotation/74b7a306-319c-4d70-8030-9cb94b97a460?secret=X00ypQ2rTQr5mF367oDtDqXzYvPi0Fti

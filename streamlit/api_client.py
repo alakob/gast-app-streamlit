@@ -1094,6 +1094,56 @@ class AMRApiClient:
                 
             return mock_jobs
 
+    def _normalize_status(self, status: str) -> str:
+        """
+        Normalize job status to a consistent format.
+        
+        Args:
+            status: Raw status string from API
+            
+        Returns:
+            Normalized status string
+        """
+        if not status:
+            return "unknown"
+        
+        # Convert to lowercase for comparison
+        status = status.lower()
+        
+        # Map API status values to UI status values
+        status_map = {
+            "pending": "pending",
+            "processing": "running",
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+            "successful": "completed",
+            "running": "running",
+            "queued": "pending",
+            "submitted": "pending"
+        }
+        
+        return status_map.get(status, status)
+
+    def get_job_status(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get the status of a job.
+        
+        Args:
+            job_id: Job ID to check
+            
+        Returns:
+            Job status data
+        """
+        try:
+            response = self._make_request("GET", f"jobs/{job_id}")
+            if response and "status" in response:
+                response["status"] = self._normalize_status(response["status"])
+            return response
+        except Exception as e:
+            logger.error(f"Error getting job status: {str(e)}")
+            return {"status": "unknown", "error": str(e)}
+
 
 # Function to generate real-looking UUIDs without mock prefix
 def generate_real_uuid():

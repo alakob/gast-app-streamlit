@@ -28,4 +28,4 @@ APP_DESCRIPTION = "Predict antimicrobial resistance and annotate bacterial genom
 MAX_UPLOAD_SIZE = 50  # MB
 
 # Sample data
-SAMPLE_SEQUENCE_PATH = os.path.join(BASE_DIR, "datasets", "test.fasta")
+SAMPLE_SEQUENCE_PATH = os.path.join(BASE_DIR, "datasets", "oxa264.fasta")

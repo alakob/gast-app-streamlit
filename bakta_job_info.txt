@@ -1,4 +1,0 @@
-Job ID: a117127d-4b30-4404-ae28-7c1ebb10c330
-Secret: BowznvI80LyFfc1Qm73SmWJTZhOB2XoB
-URL: https://bakta.computational.bio/annotation/a117127d-4b30-4404-ae28-7c1ebb10c330?secret=BowznvI80LyFfc1Qm73SmWJTZhOB2XoB
-Final Status: SUCCESSFUL

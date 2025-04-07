@@ -1,7 +1,0 @@
-# Annotated with Bakta
-# Software: v1.11.0
-# Database: v6.0, full
-# DOI: 10.1099/mgen.0.000685
-# URL: github.com/oschwengers/bakta
-#Sequence Id	Type	Start	Stop	Strand	Locus Tag	Gene	Product	DbXrefs
-OXA-264	cds	1	828	+	OXA264_01	blaOXA	OXA-214 family carbapenem-hydrolyzing class D beta-lactamase	EC:3.5.2.6, GO:0008658, GO:0008800, KEGG:K19321, NCBIProtein:WP_005087154.1, RefSeq:WP_262443575.1, SO:0001217, UniParc:UPI0021CDB266, UniRef:UniRef100_UPI0021CDB266, UniRef:UniRef50_G9JKW0, UniRef:UniRef90_G9JKW0

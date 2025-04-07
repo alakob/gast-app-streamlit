@@ -141,7 +141,7 @@ if "initialized" not in st.session_state:
     st.session_state.enable_bakta = True  # Default to enabled
     st.session_state.using_real_bakta_api = True  # Force real API mode
     st.session_state.jobs = []
-    st.session_state.active_tab = 0  # Track active tab index (0-based)
+    st.session_state.active_tab = 1  # Set Sequence Input tab as default (1-based index)
     
     # Initialize bakta_params with defaults from config
     st.session_state.bakta_params = {
@@ -153,7 +153,7 @@ if "initialized" not in st.session_state:
         "locus": "",
         "locus_tag": ""
     }
-    logger.info("Session state initialized with default values")
+    logger.info("Session state initialized with default values and Sequence Input tab as default")
 else:
     logger.info("Session already initialized, reusing existing state")
 
@@ -589,23 +589,39 @@ def process_submission():
         return
     
     logger.info(f"Submitting valid sequence of length {len(st.session_state.sequence)}")
-    with st.spinner("Submitting sequence for analysis..."):
-        # Clear any previous results
-        if "amr_results" in st.session_state:
-            logger.info("Clearing previous AMR results")
-            del st.session_state.amr_results
-        if "bakta_results" in st.session_state:
-            logger.info("Clearing previous Bakta results")
-            del st.session_state.bakta_results
+    
+    # Create a single container for the processing message
+    message_container = st.empty()
+    
+    # Clear any previous results
+    if "amr_results" in st.session_state:
+        logger.info("Clearing previous AMR results")
+        del st.session_state.amr_results
+    if "bakta_results" in st.session_state:
+        logger.info("Clearing previous Bakta results")
+        del st.session_state.bakta_results
+    
+    try:
+        # Create AMR API client
+        client = create_amr_client()
         
-        # Submit AMR job
+        # Show initial processing message and wait
+        message_container.markdown("⏳ Processing sequence... 🔄 Tokenizing")
+        time.sleep(2)  # Show tokenizing for 2 seconds
+        
+        # Submit AMR job and get initial status
         logger.info("Initiating AMR job submission")
-        amr_job_id = submit_amr_job(st.session_state.sequence)
+        response = client.predict_amr(st.session_state.sequence, st.session_state.amr_params)
+        amr_job_id = response.get("job_id")
         
         if amr_job_id:
             logger.info(f"AMR job submission successful, job ID: {amr_job_id}")
             st.session_state.amr_job_id = amr_job_id
             st.session_state.amr_status = "PENDING"
+            
+            # Update status to segmenting and wait
+            message_container.markdown("⏳ Processing sequence... 🔍 Segmenting")
+            time.sleep(2)  # Show segmenting for 2 seconds
             
             # Add AMR job to history
             amr_job_data = {
@@ -616,18 +632,39 @@ def process_submission():
             }
             add_job_to_history(amr_job_data)
             
+            # Update status to predicting and wait
+            message_container.markdown("⏳ Processing sequence... 🧬 Predicting")
+            time.sleep(2)  # Show predicting for 2 seconds
+            
+            # Wait for initial prediction to complete
+            max_attempts = 10
+            attempt = 0
+            while attempt < max_attempts:
+                status_data = client.get_prediction_status(amr_job_id)
+                current_stage = status_data.get("status", "").lower()
+                if current_stage in ["complete", "completed", "successful"]:
+                    break
+                attempt += 1
+                time.sleep(0.5)  # Reduced individual check delay since we have visual delays
+            
             st.success(f"AMR prediction job submitted (ID: {amr_job_id})")
         else:
             logger.error("AMR job submission failed, no job ID returned")
+            st.error("Failed to submit AMR prediction job")
+            return
         
         # Submit Bakta job if enabled
         if st.session_state.get("enable_bakta", False):
             logger.info("Bakta enabled, initiating Bakta job submission")
+            
+            # Update status to annotating and wait
+            message_container.markdown("⏳ Processing sequence... 📝 Annotating")
+            time.sleep(2)  # Show annotating for 2 seconds
+            
             bakta_job_id = submit_bakta_job(st.session_state.sequence)
             
             if bakta_job_id:
                 logger.info(f"Bakta job submission successful, job ID: {bakta_job_id}")
-                # Store job ID and status in session state
                 st.session_state.bakta_job_id = bakta_job_id
                 st.session_state.bakta_status = "PENDING"
                 
@@ -644,15 +681,11 @@ def process_submission():
                 if amr_job_id and JOB_ASSOCIATION_AVAILABLE:
                     logger.info(f"Associating AMR job {amr_job_id} with Bakta job {bakta_job_id}")
                     try:
-                        # Update database association
                         associate_jobs(amr_job_id, bakta_job_id)
-                        
-                        # Update session state for quick lookup
                         if "job_associations" not in st.session_state:
                             st.session_state.job_associations = {}
                         st.session_state.job_associations[amr_job_id] = bakta_job_id
                         st.session_state.job_associations[bakta_job_id] = amr_job_id
-                        
                         logger.info(f"Successfully associated AMR job {amr_job_id} with Bakta job {bakta_job_id}")
                     except Exception as e:
                         logger.error(f"Error associating jobs: {str(e)}")
@@ -660,18 +693,23 @@ def process_submission():
                 st.success(f"Bakta annotation job submitted (ID: {bakta_job_id})")
             else:
                 logger.error("Bakta job submission failed, no job ID returned")
+                st.error("Failed to submit Bakta annotation job")
         else:
             logger.info("Bakta disabled, skipping Bakta job submission")
             # Remove bakta job data from session state if it exists
-            if "bakta_job_id" in st.session_state:
-                logger.info("Removing bakta_job_id from session state as Bakta is disabled")
-                del st.session_state.bakta_job_id
-            if "bakta_status" in st.session_state:
-                logger.info("Removing bakta_status from session state as Bakta is disabled")
-                del st.session_state.bakta_status
-            if "bakta_results" in st.session_state:
-                logger.info("Removing bakta_results from session state as Bakta is disabled")
-                del st.session_state.bakta_results
+            for key in ["bakta_job_id", "bakta_status", "bakta_results"]:
+                if key in st.session_state:
+                    logger.info(f"Removing {key} from session state as Bakta is disabled")
+                    del st.session_state[key]
+        
+        # Show completion message and wait briefly
+        message_container.markdown("⏳ Processing sequence... ✅ Complete")
+        time.sleep(1)  # Show completion for 1 second
+        
+    except Exception as e:
+        logger.error(f"Error during sequence processing: {str(e)}")
+        st.error(f"An error occurred during processing: {str(e)}")
+        return
     
     logger.info("Sequence submission processing completed")
     # Force real API mode
@@ -789,33 +827,60 @@ with tab3:
     # Check if force_rerun is requested
     if "force_rerun" in st.session_state and st.session_state.force_rerun:
         logger.info("Force rerun detected in results tab - forcing immediate database check")
-        # Force real API mode
+        # Force real API mode and clear mock data
         st.session_state["using_real_amr_api"] = True
-        # Clear any mock job tracking
         if "_mock_job_ids" in st.session_state:
             st.session_state["_mock_job_ids"] = set()
         # Reset the flag
         st.session_state.force_rerun = False
+        # Force immediate status check
+        check_job_status()
         # Force a page rerun to apply changes
         st.rerun()
     
-    # Check job statuses periodically
-    if "amr_job_id" in st.session_state or "bakta_job_id" in st.session_state:
-        # Always force a fresh status check in real mode
-        st.session_state["using_real_amr_api"] = True
-        check_job_status()
-        
-        # Add refresh button if jobs are still running
-        status_list = ["SUCCESSFUL", "FAILED", "CANCELLED", "COMPLETED", "COMPLETE"]
-        if (st.session_state.get("amr_status", "").upper() not in status_list or
-            st.session_state.get("bakta_status", "").upper() not in status_list):
+    # Check job statuses when on results tab
+    if st.session_state.get("active_tab") == 2:  # Results tab
+        if "amr_job_id" in st.session_state or "bakta_job_id" in st.session_state:
+            # Force real API mode
+            st.session_state["using_real_amr_api"] = True
             
-            if st.button("Refresh Status"):
-                # Force database check with real mode
-                st.session_state["using_real_amr_api"] = True
-                st.session_state["_mock_job_ids"] = set()
+            # Get current statuses
+            amr_status = st.session_state.get("amr_status", "").upper()
+            bakta_status = st.session_state.get("bakta_status", "").upper()
+            
+            # Define status categories
+            running_statuses = ["SUBMITTED", "PENDING", "QUEUED", "RUNNING", "PROCESSING"]
+            complete_statuses = ["COMPLETED", "COMPLETE", "SUCCESSFUL", "SUCCESS", "DONE", "FINISHED"]
+            
+            # Check if any job is still running
+            amr_running = amr_status in running_statuses
+            bakta_running = bakta_status in running_statuses and st.session_state.get("enable_bakta", False)
+            
+            # If either job is running, force status check and auto-refresh
+            if amr_running or bakta_running:
+                logger.info("Jobs still running, checking status...")
                 check_job_status()
+                
+                # Add refresh button and status message
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("🔄 Refresh"):
+                        st.session_state["using_real_amr_api"] = True
+                        st.session_state["_mock_job_ids"] = set()
+                        check_job_status()
+                        st.rerun()
+                with col2:
+                    st.info("⏳ Processing jobs... Status updates automatically every 5 seconds")
+                
+                # Auto-refresh if jobs are still running
+                time.sleep(5)
                 st.rerun()
+            else:
+                # Check if we need one final status update
+                if amr_status not in complete_statuses or (bakta_status not in complete_statuses and st.session_state.get("enable_bakta", False)):
+                    logger.info("Jobs appear complete, performing final status check")
+                    check_job_status()
+                    st.rerun()
 
 with tab4:
     create_job_management_tab()
@@ -832,25 +897,25 @@ if "amr_job_id" in st.session_state or "bakta_job_id" in st.session_state:
     amr_status = st.session_state.get("amr_status", "")
     bakta_status = st.session_state.get("bakta_status", "")
     
-    # Non-final statuses
-    running_statuses = ["SUBMITTED", "PENDING", "QUEUED", "RUNNING", "PROCESSING"]
-    
-    # Complete status values (case-insensitive check)
-    complete_statuses = ["COMPLETED", "COMPLETE", "SUCCESSFUL", "SUCCESS", "DONE", "FINISHED"]
-    
+    # Non-final statuses (case-insensitive)
+    running_statuses = ["submitted", "pending", "queued", "running", "processing"]
+
+    # Complete status values (case-insensitive)
+    complete_statuses = ["completed", "complete", "successful", "success", "done", "finished"]
+
     # First, normalize statuses for case-insensitive comparison
-    amr_status_upper = amr_status.upper() if amr_status else ""
-    bakta_status_upper = bakta_status.upper() if bakta_status else ""
-    
+    amr_status_upper = amr_status.lower() if amr_status else ""
+    bakta_status_upper = bakta_status.lower() if bakta_status else ""
+
     # Check if any job is actually in a running state
-    is_running = (amr_status_upper in [s.upper() for s in running_statuses] or 
-                 bakta_status_upper in [s.upper() for s in running_statuses])
-    
+    is_running = (amr_status_upper in running_statuses or 
+                 bakta_status_upper in running_statuses)
+
     # Check if we have at least one job but none are completed
     has_jobs = ("amr_job_id" in st.session_state or "bakta_job_id" in st.session_state)
-    is_completed = (amr_status_upper in [s.upper() for s in complete_statuses] or 
-                   bakta_status_upper in [s.upper() for s in complete_statuses])
-    
+    is_completed = (amr_status_upper in complete_statuses or 
+                   bakta_status_upper in complete_statuses)
+
     # Only show running message and auto-refresh if jobs are actually running
     if is_running and has_jobs and not is_completed:
         st.markdown("---")

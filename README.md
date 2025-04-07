@@ -24,11 +24,11 @@ The application follows a containerized, API-driven architecture with distinct f
 
 ```mermaid
 graph TD
-    subgraph User Interaction
+    subgraph User_Interaction
         User[<fa:fa-user> User]
     end
 
-    subgraph Frontend (Streamlit)
+    subgraph Frontend_Streamlit
         direction LR
         UI[<fa:fa-desktop> Streamlit UI (app.py)]
         Utils[<fa:fa-cogs> Streamlit Utils (utils.py)]
@@ -39,7 +39,7 @@ graph TD
         Utils -- Updates --> State
     end
 
-    subgraph Backend (FastAPI)
+    subgraph Backend_FastAPI
         direction LR
         API[<fa:fa-server> AMR FastAPI (main.py, routers/)]
         AMRModel[<fa:fa-brain> AMR Prediction Model]
@@ -53,19 +53,19 @@ graph TD
         API -- Potentially Uses --> Auth
     end
 
-    subgraph Database (PostgreSQL)
+    subgraph Database_PostgreSQL
         DB[<fa:fa-database> PostgreSQL Database (amr_predictor_dev)]
         SchemaInit[<fa:fa-file-code> Schema Init Scripts (e.g., 02a-create-bakta-schema.sql)]
     end
 
-    subgraph External Services
+    subgraph External_Services
         BaktaSvc[<fa:fa-cloud> Bakta Service/API]
     end
 
-    subgraph Infrastructure & Deployment (Docker)
+    subgraph Infrastructure_Deployment_Docker
         direction TB
         BuildScript[<fa:fa-terminal> build_container.sh] -- Manages --> DockerEnv
-        subgraph Docker Environment
+        subgraph Docker_Environment
             direction LR
             StContainer[<fa:fa-docker> Streamlit Container]
             ApiContainer[<fa:fa-docker> API Container]
@@ -82,7 +82,7 @@ graph TD
         ApiContainer -- Runs --> API
     end
 
-    subgraph Logging & Monitoring
+    subgraph Logging_Monitoring
         Logging[<fa:fa-clipboard-list> Logging (Python Logger)]
     end
 

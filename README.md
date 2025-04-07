@@ -30,8 +30,8 @@ graph TD
 
     subgraph Frontend_Streamlit
         direction LR
-        UI[<fa:fa-desktop> Streamlit UI (app.py)]
-        Utils[<fa:fa-cogs> Streamlit Utils (utils.py)]
+        UI[<fa:fa-desktop> Streamlit UI - app.py]
+        Utils[<fa:fa-cogs> Streamlit Utils - utils.py]
         State[<fa:fa-database> Session State]
 
         UI -- Manages --> State
@@ -41,11 +41,11 @@ graph TD
 
     subgraph Backend_FastAPI
         direction LR
-        API[<fa:fa-server> AMR FastAPI (main.py, routers/)]
+        API[<fa:fa-server> AMR FastAPI - main.py_routers]
         AMRModel[<fa:fa-brain> AMR Prediction Model]
-        BaktaClient[<fa:fa-plug> Bakta Client/Executor]
-        DBClient[<fa:fa-database> Database Client (SQLAlchemy, asyncpg)]
-        Auth[<fa:fa-shield-alt> Auth (Potential)]
+        BaktaClient[<fa:fa-plug> Bakta Client_Executor]
+        DBClient[<fa:fa-database> Database Client - SQLAlchemy_asyncpg]
+        Auth[<fa:fa-shield-alt> Auth_Potential]
 
         API -- Uses --> DBClient
         API -- Runs --> AMRModel
@@ -54,12 +54,12 @@ graph TD
     end
 
     subgraph Database_PostgreSQL
-        DB[<fa:fa-database> PostgreSQL Database (amr_predictor_dev)]
-        SchemaInit[<fa:fa-file-code> Schema Init Scripts (e.g., 02a-create-bakta-schema.sql)]
+        DB[<fa:fa-database> PostgreSQL Database - amr_predictor_dev]
+        SchemaInit[<fa:fa-file-code> Schema Init Scripts]
     end
 
     subgraph External_Services
-        BaktaSvc[<fa:fa-cloud> Bakta Service/API]
+        BaktaSvc[<fa:fa-cloud> Bakta Service_API]
     end
 
     subgraph Infrastructure_Deployment_Docker
@@ -72,7 +72,7 @@ graph TD
             DbContainer[<fa:fa-docker> DB Container]
             PgAdmin[<fa:fa-docker> pgAdmin Container]
         end
-        DockerVolumes[<fa:fa-hdd> Docker Volumes (e.g., DB Data, Results)]
+        DockerVolumes[<fa:fa-hdd> Docker Volumes - DB_Data_Results]
 
         BuildScript -- Initializes --> DbContainer
         SchemaInit -- Used by --> BuildScript
@@ -83,30 +83,30 @@ graph TD
     end
 
     subgraph Logging_Monitoring
-        Logging[<fa:fa-clipboard-list> Logging (Python Logger)]
+        Logging[<fa:fa-clipboard-list> Logging - Python Logger]
     end
 
     %% Interactions & Data Flow
-    User -- Interacts (Input Sequence, Settings) --> UI
-    UI -- Submits Job Request (FASTA, Params) --> API
-    UI -- Polls for Status (Job ID) --> API
-    UI -- Fetches Results (Job ID) --> API
-    API -- Returns Status/Results --> UI
+    User -- Interacts - Input Sequence_Settings --> UI
+    UI -- Submits Job Request - FASTA_Params --> API
+    UI -- Polls for Status - Job ID --> API
+    UI -- Fetches Results - Job ID --> API
+    API -- Returns Status_Results --> UI
 
-    API -- Stores/Retrieves Job Info (Job ID, Status, Params, Sequence) --> DBClient
-    API -- Stores/Retrieves Results (Predictions, Annotations) --> DBClient
+    API -- Stores_Retrieves Job Info - Job ID_Status_Params_Sequence --> DBClient
+    API -- Stores_Retrieves Results - Predictions_Annotations --> DBClient
     DBClient -- Interacts --> DB
 
     API -- Sends Sequence --> AMRModel
     AMRModel -- Returns Predictions --> API
 
-    API -- Submits Bakta Job (Sequence, Config, Secret) --> BaktaClient
+    API -- Submits Bakta Job - Sequence_Config_Secret --> BaktaClient
     BaktaClient -- Interacts --> BaktaSvc
-    BaktaSvc -- Returns Job ID/Status/Results --> BaktaClient
-    BaktaClient -- Relays Status/Results --> API
+    BaktaSvc -- Returns Job ID_Status_Results --> BaktaClient
+    BaktaClient -- Relays Status_Results --> API
 
-    Auth -- Secures? --> API
-    UI -- Auth Request? --> Auth
+    Auth -- Secures --> API
+    UI -- Auth Request --> Auth
 
     UI -- Logs Events --> Logging
     API -- Logs Events --> Logging

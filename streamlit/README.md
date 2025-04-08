@@ -1,6 +1,6 @@
 # AMR Prediction & Genome Annotation Streamlit UI
 
-This is a Streamlit interface for the AMR Prediction and Bakta Genome Annotation tools. The application provides an easy-to-use web interface for analyzing bacterial sequences, predicting antimicrobial resistance, and performing genome annotation.
+This is a Streamlit interface for the AMR Prediction and Bakta Genome Annotation tools. The application provides an easy-to-use web interface for analyzing bacterial sequences, predicting antimicrobial resistance, and performing genome annotation. 
 
 ## Features
 

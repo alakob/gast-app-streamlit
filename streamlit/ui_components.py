@@ -121,8 +121,8 @@ def create_sidebar() -> None:
         st.session_state.amr_params["batch_size"] = st.slider(
             "Batch Size",
             min_value=1,
-            max_value=32,
-            value=8,
+            max_value=200,
+            value=min(8, 200),
             step=1,
             help="Number of sequences to process in a single batch"
         )

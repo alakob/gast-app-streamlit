@@ -302,11 +302,6 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
                         else:
                             logger.warning(f"Aggregated file not found at: {agg_file_path}")
             
-            # Set default metrics
-            total_sequences = 0
-            resistant_sequences = 0
-            resistance_percentage = 0
-            
             # Calculate metrics from aggregated data if available
             if has_aggregated_data and aggregated_df is not None and not aggregated_df.empty:
                 # Count total unique sequence IDs
@@ -316,17 +311,11 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
                     # Fallback to just counting rows
                     total_sequences = len(aggregated_df)
                 
-                # Count resistant sequences based on any_resistance or similar column
+                # Count resistant sequences based *specifically* on the avg_classification column
                 resistant_values = ["RESISTANT", "R", "Resistant"]
-                resistance_col = None
+                resistance_col = 'avg_classification' # Target specific column
                 
-                # Try different possible column names for resistance classification
-                for col_name in ['any_resistance', 'majority_vote', 'avg_classification']:
-                    if col_name in aggregated_df.columns:
-                        resistance_col = col_name
-                        break
-                
-                if resistance_col:
+                if resistance_col in aggregated_df.columns:
                     resistant_sequences = aggregated_df[resistance_col].apply(
                         lambda x: str(x).upper() in [r.upper() for r in resistant_values]
                     ).sum()
@@ -334,16 +323,21 @@ def view_amr_prediction_result(job_id: str, results: Dict[str, Any]) -> None:
                     # Calculate resistance percentage
                     if total_sequences > 0:
                         resistance_percentage = round(resistant_sequences / total_sequences * 100, 1)
+                    logger.info(f"Calculated resistance summary based on '{resistance_col}' column.")
+                else:
+                    logger.warning(f"'{resistance_col}' column not found in aggregated results. Cannot calculate resistance summary from it.")
+                    # Keep resistant_sequences and resistance_percentage at their default (0)
             else:
                 # Fallback to prediction data if no aggregated data
+                logger.info("No valid aggregated data found, using prediction data for summary.")
                 total_sequences = 1  # Assume one sequence when no aggregated data
                 
                 # Count resistant predictions as before
                 resistant_count = 0
                 if "prediction" in df.columns:
-                    resistant_values = ["RESISTANT", "R"]
+                    resistant_values_pred = ["RESISTANT", "R"]
                     resistant_count = df["prediction"].apply(
-                        lambda x: str(x).upper() in resistant_values
+                        lambda x: str(x).upper() in resistant_values_pred
                     ).sum()
                     
                     # If any antibiotic shows resistance, mark the sequence as resistant
